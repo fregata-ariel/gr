@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environmetal Speciific files
+.DS_Store
+*.log
+*.env
+*.ini
+*.cfg
+*.bak
+*.tmp
+*.swp
+*.swo
+*.vscode/
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
