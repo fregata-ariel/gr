@@ -47,3 +47,34 @@ class Op:
     forward: dict[str, Any] = field(default_factory=dict)
     inverse: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+
+
+# ──────────────────────────────────────────────
+#  Motif — structural block extracted from Op history
+# ──────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Motif:
+    """
+    A structural building block extracted by interpreting the
+    reduction history in reverse (undo / reconstruction order).
+
+    kind:
+        "entry"   — root node with no predecessors
+        "linear"  — single-predecessor extension
+        "merge"   — multi-predecessor convergence (branch join)
+        "loop"    — back-edge restoration completing a cycle
+
+    node:   the node being reconstructed (None for loop motifs)
+    preds:  predecessor node ids at reconstruction time
+    succs:  successor node ids at reconstruction time
+    meta:   extra info — for loops: {"header": ..., "scc": [...],
+                                      "back_edges": [...]}
+    step:   index in reconstruction order (0 = first undo replayed)
+    """
+    kind: str
+    node: str | None
+    preds: tuple[str, ...]
+    succs: tuple[str, ...]
+    meta: dict[str, Any] = field(default_factory=dict)
+    step: int = 0
