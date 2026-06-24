@@ -78,3 +78,4 @@ class Motif:
     succs: tuple[str, ...]
     meta: dict[str, Any] = field(default_factory=dict)
     step: int = 0
+    children: tuple['Motif', ...] = ()
