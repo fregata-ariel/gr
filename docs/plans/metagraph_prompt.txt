@@ -1,0 +1,8 @@
+Read the implementation plan at docs/plans/metagraph_impl.md and implement all changes it specifies:
+
+1. Add the MetaGraph frozen dataclass to cfg_reducer/types.py (after Motif)
+2. Create cfg_reducer/metagraph.py with the build() function
+3. Update cfg_reducer/__init__.py to export MetaGraph and metagraph
+4. Create tests/test_metagraph.py with the 3 test cases (diamond, simple loop, nested loop)
+
+The plan contains exact type definitions, the algorithm, and test structure. Follow the existing code style in cfg_reducer/ — see motif.py and types.py for reference. Run the tests with `uv run python -m pytest tests/test_metagraph.py -v` and ensure all 3 pass.
