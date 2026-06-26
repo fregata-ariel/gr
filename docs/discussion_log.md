@@ -47,7 +47,7 @@ colab run --gpu T4 train.py
 
 ### 未決事項・議論中
 
-- [ ] Motifメタグラフの具体的なエッジ定義（何をもってMotif間に依存ありとするか）
+- [x] Motifメタグラフの具体的なエッジ定義 → セッション2で確定
 - [ ] モデルアーキテクチャの選択（自己回帰 vs 離散拡散 vs 階層展開）
 - [ ] データ生成パイプラインの具体仕様（バッチ生成、出力フォーマット）
 - [ ] Motif語彙の粒度（4種で十分か、サブタイプを設けるか）
@@ -106,6 +106,85 @@ step 2: Linear(D)              preds=(C,), succs=()
 - Simple loop (A→B→C→B, C→D): Loop(preds=A, succs=D) + 子2件
 - Nested loop (A→B→C→D→C, D→B, B→E): 外Loop内に内Loopが入れ子
 - build_cfg 8ノード: Loop内Merge含む複合構造
+
+---
+
+## 2026-06-25 セッション2
+
+### 開発フロー決定
+
+- **設計・議論**: Claude Codeセッションで行う
+- **実装委譲**: Codex CLI（GPT-5.4）に仕様を渡して実装させる
+  - アウトカム指向でプロンプトを書く（手順ではなく「何を実現するか」）
+  - ファイルパス・既存パターン・制約を明示
+  - コードレビューにも活用可（評価軸を具体的に指定）
+- **小規模修正**: セッション内で直接実施
+
+### 決定: メタグラフ エッジ定義
+
+**Loopコンテナ化により統一ルールが成立**:
+
+Motif `M_i` が復元したノードが、Motif `M_j` の `preds` or `succs` に含まれるとき `M_i → M_j`。
+
+- 非Loop: `M_i.node` が復元ノード
+- Loop: `M_i.meta["scc"]` の全メンバーが復元ノード群（メタグラフ上はLoopが代表）
+
+Loopが外部インターフェース（`preds`/`succs`）を持つため、提案B（Loop特殊扱い）は不要になった。
+
+**エッジ種別は当面不要**: 方向のみで十分。pred依存/succ依存/loop-memberなどの種別追加は精度頭打ち時の拡張オプション。
+
+**例**:
+```
+Diamond:  Entry(A) → Linear(B) → Merge(D)
+          Entry(A) → Linear(C) → Merge(D)
+
+Loop:     Entry(A) → Loop({B,C}) → Linear(D)
+```
+
+### 決定: 階層的メタグラフ
+
+**トップレベル**: Loop Motifは中身を隠蔽した1ノード。CFGの大局的な流れだけが見えるDAG。
+
+**Loop内部**: childrenだけを対象に同じエッジ構築アルゴリズムを再帰適用 → サブメタグラフ。ネストしたLoopがあればさらに再帰。
+
+**将来の拡張余地**: Linear/分岐（3つ以上の分岐含む）もサブグラフを内包する可能性がある（例: アルゴリズムの列挙がトップレベル、各Linearが内部に分岐やループを持つ）。しかし現時点ではLoopだけ。
+
+### 決定: MetaGraph データ構造
+
+Motifは`frozen`なのでエッジ情報を埋め込まず、外部構造として分離:
+
+```python
+@dataclass(frozen=True)
+class MetaGraph:
+    motifs: tuple[Motif, ...]
+    edges: tuple[tuple[int, int], ...]   # (src_step, dst_step)
+    subgraphs: dict[int, 'MetaGraph']    # loop_step → child MetaGraph
+```
+
+**利点**: 同じMotifリストに対して異なるエッジ定義を試すことが容易。
+
+### 決定: metagraph.py 分離
+
+パイプラインの処理フロー:
+
+```
+algorithm.py → engine.py → Op列
+  → motif.py (Op → Motifツリー)
+  → metagraph.py (Motifツリー → MetaGraph DAG)
+  → [将来] データパイプライン / モデル入力
+```
+
+`motif.py` の責務は「Op→Motif抽出」、`metagraph.py` は「Motifツリー→DAG構造」。変換の種類が異なるため分離。
+
+### 実装計画
+
+`docs/plans/metagraph_impl.md` に詳細仕様を記載。Codex CLI（GPT-5.4）で実装予定。
+
+対象ファイル:
+- `cfg_reducer/types.py` — MetaGraph追加
+- `cfg_reducer/metagraph.py` — 新規作成（`build()`関数）
+- `cfg_reducer/__init__.py` — エクスポート追加
+- `tests/test_metagraph.py` — テスト3件（diamond, simple loop, nested loop）
 
 ---
 
