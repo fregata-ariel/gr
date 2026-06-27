@@ -79,3 +79,18 @@ class Motif:
     meta: dict[str, Any] = field(default_factory=dict)
     step: int = 0
     children: tuple['Motif', ...] = ()
+
+
+@dataclass(frozen=True)
+class MetaGraph:
+    """
+    DAG of Motif dependencies at one level of the hierarchy.
+
+    motifs:     Motif nodes at this level (ordered by step).
+    edges:      (src_step, dst_step) pairs — src restored a node that
+                dst references in preds/succs.
+    subgraphs:  Loop Motif step → MetaGraph of its children.
+    """
+    motifs: tuple[Motif, ...]
+    edges: tuple[tuple[int, int], ...]
+    subgraphs: dict[int, 'MetaGraph'] = field(default_factory=dict)
