@@ -24,14 +24,17 @@ from cfg_reducer import GraphEngine, ReductionAlgorithm, store
 #  Graph construction
 # ──────────────────────────────────────────────
 
-def build_cfg(engine: GraphEngine,
+def build_cfg(engine: GraphEngine | None = None,
               num_nodes: int = 12,
               edge_prob: float = 0.5,
-              seed: int = 42) -> list[str]:
+              seed: int = 42) -> GraphEngine:
     """
     構造ベース＋スパゲティ化のハイブリッドCFG生成。
     DAG（有向非巡回グラフ）で基本構造を作り、後から安全なループとジャンプを追加する。
     """
+    if engine is None:
+        engine = GraphEngine()
+
     rng = random.Random(seed)
     ids = [f"N{i:02d}" for i in range(num_nodes)]
 
@@ -41,7 +44,7 @@ def build_cfg(engine: GraphEngine,
     if num_nodes < 3:
         for i in range(num_nodes - 1):
             engine.add_edge(ids[i], ids[i+1])
-        return ids
+        return engine
 
     # ──────────────────────────────────────────────
     # 1. 前方への基本構造構築 (DAG)
@@ -110,7 +113,7 @@ def build_cfg(engine: GraphEngine,
             if v not in engine.successors(u):
                 engine.add_edge(u, v)
 
-    return ids
+    return engine
 
 
 # ──────────────────────────────────────────────
