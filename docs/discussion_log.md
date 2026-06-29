@@ -187,4 +187,3 @@ algorithm.py → engine.py → Op列
 - `tests/test_metagraph.py` — テスト3件（diamond, simple loop, nested loop）
 
 ---
-

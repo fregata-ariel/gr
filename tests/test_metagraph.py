@@ -1,4 +1,5 @@
 from cfg_reducer import GraphEngine, MetaGraph, ReductionAlgorithm, motif, metagraph
+from main import build_cfg
 
 
 def _build_graph(edges: list[tuple[str, str]]) -> GraphEngine:
@@ -31,6 +32,80 @@ def _node_steps(mg: MetaGraph) -> dict[str, int]:
         for m in mg.motifs
         if m.node is not None
     }
+
+
+def test_linear_chain():
+    mg = _extract_metagraph([
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "D"),
+    ])
+    steps = _node_steps(mg)
+
+    assert len(mg.motifs) == 4
+    assert len(mg.edges) == 3
+    assert set(mg.edges) == {
+        (steps["A"], steps["B"]),
+        (steps["B"], steps["C"]),
+        (steps["C"], steps["D"]),
+    }
+    assert mg.subgraphs == {}
+
+
+def test_multi_exit_loop():
+    mg = _extract_metagraph([
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "B"),
+        ("C", "D"),
+        ("C", "E"),
+    ])
+    steps = _node_steps(mg)
+    loop = next(m for m in mg.motifs if m.kind == "loop")
+    exits = [m for m in mg.motifs if m.node in {"D", "E"}]
+
+    assert len(mg.motifs) == 4
+    assert len(exits) == 2
+    assert all(m.kind != "loop" for m in exits)
+    assert len(mg.edges) == 3
+    assert set(mg.edges) == {
+        (steps["A"], loop.step),
+        (loop.step, steps["D"]),
+        (loop.step, steps["E"]),
+    }
+    assert len(mg.subgraphs) == 1
+
+
+def test_dag_invariant():
+    mg = _extract_metagraph([
+        ("A", "B"),
+        ("A", "C"),
+        ("B", "D"),
+        ("C", "D"),
+    ])
+
+    for src, dst in mg.edges:
+        assert src < dst
+
+
+def test_build_cfg_integration():
+    engine = build_cfg()
+    algorithm = ReductionAlgorithm(engine)
+
+    while algorithm.step() is not None:
+        pass
+
+    motifs = motif.extract(engine.history)
+    mg = metagraph.build(motifs)
+    motif_steps = {m.step for m in mg.motifs}
+    loop_steps = {m.step for m in mg.motifs if m.kind == "loop"}
+
+    assert mg.motifs
+    assert all(
+        src in motif_steps and dst in motif_steps
+        for src, dst in mg.edges
+    )
+    assert mg.subgraphs.keys() <= loop_steps
 
 
 def test_diamond_metagraph():
