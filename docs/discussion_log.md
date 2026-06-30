@@ -187,3 +187,141 @@ algorithm.py → engine.py → Op列
 - `tests/test_metagraph.py` — テスト3件（diamond, simple loop, nested loop）
 
 ---
+
+## 2026-06-29 セッション3
+
+### メタグラフ実装完了・マージ
+
+PR #1 (feat/metagraph) を main にマージ。最終状態:
+- `cfg_reducer/types.py` — MetaGraph frozen dataclass追加
+- `cfg_reducer/metagraph.py` — `build()` 関数（再帰的サブグラフ構築）
+- `tests/test_metagraph.py` — 7テスト（diamond, simple loop, nested loop, linear chain, multi-exit loop, DAG invariant, build_cfg integration）
+- `main.py` — `build_cfg()` を `engine` 引数オプショナル化、`GraphEngine` を返すように変更
+
+### 議論: モデルアーキテクチャの選択
+
+**候補**: 階層展開型 Graph Transformer（隣接ノード全体を1ステップで生成）
+
+#### 決定: 順列不変性の要件分離
+
+ノード順列の正規化について議論した結果、2つの異なる不変性要件を混同していたことが判明。明確に分離する。
+
+**A. 生成過程の順序（正規化不要・バイアス歓迎）**
+
+グラフ構築ステップの順序はバイアスがあって良い。構築過程を意味空間上のダイナミクスと捉えると、構築順序は構造の意味論を反映する有用な情報。同一グラフでも異なる構築パスは異なる意味を持ちうる。リダクションのstep順序がこのダイナミクスの記録にあたる。
+
+**B. 完成グラフのトークン表現（順列不変性必須）**
+
+完成グラフを下流モデル（LLM等）にトークン列として入力する際、ノードの並び順が出力を変えてはならない。`{A, B, C}` と `{C, A, B}` は等価に扱われる必要がある。これは生成アーキテクチャの問題ではなく、エンコーダ設計の問題。
+
+**Bの解決策: 構造的位置エンコーディング**
+
+Graph Transformerのself-attentionは集合演算であり、本質的に順列等変。ただしpositional encodingの選択が鍵:
+- 絶対位置エンコーディング（sin/cos等）→ ノード順に依存 → **使用禁止**
+- 構造的位置エンコーディング（Laplacian固有ベクトル、Random Walk SE）→ グラフ構造から計算、順序非依存 → **採用**
+- 隣接行列をattention biasとして入力（Graphormer方式）も順序非依存
+
+#### 決定: 生成のコアオペレーション
+
+```
+expand(node_v) → Set(neighbors)
+```
+
+特定ノードの隣接ノードをセットとして同時生成する。これが基本操作。
+
+- 展開順序: 意味を持つため保持（ダイナミクスの記録）
+- セット内部: 順序なし（set prediction, Hungarian matching等）
+- 部分修正: 問題ノードまで遡って再展開（既存のOp history/undo機構と対応）
+
+#### 決定: 全体アーキテクチャ構成
+
+```
+[生成]  expand(v) → Set(neighbors)   ← 階層展開 + set prediction
+          ↓ 構築過程 = ダイナミクス
+[完成グラフ]
+          ↓ Graph Transformer (構造的PE, no absolute PE)
+[エンコーダ出力]  node embeddings (permutation equivariant)
+          ↓ cross-attention
+[LLM]
+```
+
+生成と理解（エンコーディング）で異なる不変性要件を持ち、それぞれに適切な機構で対処する。
+
+**将来展望**: CFGのMotifグラフだけでなく、抽象DAG（アルゴリズム選択、概念の連鎖）にも適用予定。Graph TransformerエンコーダをLLMに統合し、構造化された推論をサポートする。
+
+### 外部レビュー: GPT-5.5 (xhigh effort)
+
+アーキテクチャ設計に対しCodex CLI経由でGPT-5.5のレビューを実施。以下は主要な指摘。
+
+#### 1. ターゲット分布: p(G) vs p(G,π)
+
+生成過程の順序バイアスを「歓迎」とする判断は概念的に正しいが、step順序がCFGの意味論ではなくアルゴリズムの決定的tie-breaking（`(weight, node_id)`による選択、ソート済みpredecessor/successorリスト）を反映している可能性がある。Chen et al. (ICML 2021) "Order Matters" によれば、単一の構築トレースで訓練すると p(G,π) を学習し、より多くの有効な構築順序を持つグラフに不適切な確率質量が割り当てられるリスクがある。
+
+**対策**: 完成グラフエンコーダにはstepを絶対に露出させないこと。ターゲット分布が軌道上か完成グラフ上かを明示的に決定すること。
+
+#### 2. expand(v) → Set(neighbors) の不完全性
+
+現在の定式化は基本操作としては有用だが、完全な生成文法ではない。以下の拡張が必要:
+
+- **Diamond問題**: B,Cが同一Merge(D)に接続する必要があるが、独立したneighbor setではD-likeノードが2つ生成されうる → `CREATE` vs `ATTACH_EXISTING` の区別が必須
+- **Loop Motif**: `node=None`, SCCコンテナ, 再帰的children → `OPEN_SUBGRAPH` / `CLOSE` アクション
+- **Motif種別の遅延決定**: mergeは最終predecessor数で定義されるが、最初の親がノードを作る時点では種別不明
+- **完全な生成規則**: `expand(v, partial_graph) → {new nodes, attachments to existing nodes, typed edges, control actions}`
+
+**対策**: アクション型 `{CREATE, ATTACH_EXISTING, OPEN_SUBGRAPH, CLOSE, STOP}` + topological/frontier policyの導入。
+
+#### 3. 位置符号化のDAG固有の問題
+
+- **RWSEの致命的欠陥**: self-loopなしDAGでは遷移行列Pが厳密上三角 → `diag(P^k) = 0` で完全に機能しない
+- **LapPE**: 対称化で方向消失 + 固有ベクトルのsign/basis曖昧性 → SignNet/BasisNet (Lim et al., ICLR 2023) が必要
+- **推奨**: typed node embeddings + directed shortest-path/reachability attention biases (Graphormer方式) + sign/basis-safe LapPE on symmetrized skeleton
+
+20ノード以下では全ペアの最短路/到達可能性バイアスの計算コストは無視可能。
+
+#### 4. Graph Transformer重み共有のリスク
+
+アーキテクチャ実装の共有は合理的だが、パラメータのデフォルトは分離すべき。
+
+- Generator: 部分グラフ + 展開ノード + 順序依存な履歴を処理
+- Encoder: 完成グラフを双方向に処理、順序情報を排除すべき
+- 共有重みはschedule情報がエンコーダに漏れる直接的な経路を作る
+- 部分グラフ ↔ 完成グラフの分布シフト
+
+**推奨**: 共有backbone + 別adapter/normalization/PE。ただし仮説であり、permutation test・alternate-schedule consistency・graph validity・downstream LLM性能で評価すべき。
+
+#### 5. 関連研究
+
+- **Jin et al. (ICML 2020)** "Hierarchical Generation of Molecular Graphs using Structural Motifs": 最も近い階層的アナロジー。motif選択とattachment解決の分離が `expand(v)` に欠けている設計要素。
+- **Liao et al. (NeurIPS 2019)** "GRAN": ブロック単位の同時生成。同時出力には同時分布と順序の明示的扱いが必要。
+- **Zhang et al. (NeurIPS 2019)** "D-VAE": DAG-awareな非同期メッセージパッシング。方向/トポロジーの尊重の重要性。
+- **Chen et al. (ICML 2021)** "Order Matters": 生成スケジュールの確率的扱いと順序周辺化の必要性。
+- **GraphGPS, Graphormer, SignNet/BasisNet**: エンコーダ側の構造的特徴量設計。
+
+#### 6. 分岐履歴の基盤問題
+
+現在のundo/redoは線形履歴（新Op実行でredo suffixが消失）。部分修正（backtrack and re-expand）にはnode-addressable backtracking（分岐履歴/tree of executions）が必要で、engine.pyの履歴構造の変更を伴う。
+
+### 論点の依存関係
+
+```
+A. ターゲット分布 p(G) vs p(G,π)        ← 全設計の前提
+├── B. 生成文法設計 (production rule)
+│   ├── D. Motif妥当性制約
+│   ├── E. 重み共有戦略 (B+Cに依存)
+│   └── F. 分岐履歴の基盤設計
+└── C. エンコーダPE選択
+    └── E. 重み共有戦略 (B+Cに依存)
+```
+
+### 未決事項（更新）
+
+- [ ] A. ターゲット分布の決定: p(G) vs p(G,π)
+- [ ] B. 生成文法設計: expand(v) → production rule（アクション型、co-reference）
+- [ ] C. エンコーダ位置符号化の選択（directed SP bias + sign-safe LapPE）
+- [ ] D. Motif文法の妥当性制約（CFG固有 → 抽象DAG一般化）
+- [ ] E. 重み共有戦略: Generator vs Encoder
+- [ ] F. 分岐履歴の基盤設計（線形 → tree of executions）
+- [ ] データ生成パイプラインの仕様
+- [ ] Motif語彙の粒度（4種で十分か、サブタイプを設けるか）
+
+---
