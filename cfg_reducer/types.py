@@ -94,3 +94,13 @@ class MetaGraph:
     motifs: tuple[Motif, ...]
     edges: tuple[tuple[int, int], ...]
     subgraphs: dict[int, 'MetaGraph'] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Skeleton:
+    """
+    Structure-only view of one MetaGraph level: (kind, parent idx set)
+    per motif in canonical order, plus nested loop skeletons.
+    """
+    items: tuple[tuple[str, tuple[int, ...]], ...]
+    subgraphs: dict[int, 'Skeleton'] = field(default_factory=dict)

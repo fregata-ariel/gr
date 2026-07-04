@@ -1,13 +1,13 @@
 """cfg_reducer — step-by-step CFG reduction with undo."""
 
-from .types import NodeType, Op, Motif, MetaGraph, BASIC
+from .types import NodeType, Op, Motif, MetaGraph, Skeleton, BASIC
 from .engine import GraphEngine, Node
 from .algorithm import ReductionAlgorithm, Scope, tarjan_scc
-from . import store, motif, metagraph
+from . import store, motif, metagraph, gen, linearize
 
 __all__ = [
-    "NodeType", "Op", "Motif", "MetaGraph", "BASIC",
+    "NodeType", "Op", "Motif", "MetaGraph", "Skeleton", "BASIC",
     "GraphEngine", "Node",
     "ReductionAlgorithm", "Scope", "tarjan_scc",
-    "store", "motif", "metagraph",
+    "store", "motif", "metagraph", "gen", "linearize",
 ]
