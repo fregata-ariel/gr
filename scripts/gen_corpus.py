@@ -74,7 +74,7 @@ def _parse_edge_probs(value: str) -> list[float]:
 def _build_record(num_nodes: int, edge_prob: float, seed: int) -> dict | None:
     engine = build_cfg(num_nodes=num_nodes, edge_prob=edge_prob, seed=seed)
     edges = _graph_edges(engine)
-    mg = _extract_metagraph(engine)
+    mg = _extract_metagraph(engine, "N00")
     tokens = encode(mg)
 
     if not _passes_canonicality_self_check(edges, tokens, seed):
@@ -94,8 +94,8 @@ def _build_record(num_nodes: int, edge_prob: float, seed: int) -> dict | None:
     }
 
 
-def _extract_metagraph(engine) -> MetaGraph:
-    algorithm = ReductionAlgorithm(engine)
+def _extract_metagraph(engine, entry: str | None) -> MetaGraph:
+    algorithm = ReductionAlgorithm(engine, entry=entry)
     while algorithm.step() is not None:
         pass
     motifs = motif.extract(engine.history)
@@ -127,7 +127,7 @@ def _passes_canonicality_self_check(
     for src, dst in edges:
         permuted.add_edge(mapping[src], mapping[dst])
 
-    return encode(_extract_metagraph(permuted)) == tokens
+    return encode(_extract_metagraph(permuted, mapping["N00"])) == tokens
 
 
 def _stats_for(mg: MetaGraph, tokens: list[str]) -> dict[str, int | dict[str, int]]:

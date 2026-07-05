@@ -37,9 +37,15 @@ def _graph_edges(engine: GraphEngine) -> list[tuple[str, str]]:
     )
 
 
-def _extract_metagraph(edges: list[tuple[str, str]]) -> MetaGraph:
+def _extract_metagraph(
+    edges: list[tuple[str, str]],
+    entry: str | None = None,
+) -> MetaGraph:
     engine = _build_graph(edges)
-    algorithm = ReductionAlgorithm(engine)
+    if entry is None:
+        algorithm = ReductionAlgorithm(engine)
+    else:
+        algorithm = ReductionAlgorithm(engine, entry=entry)
 
     while algorithm.step() is not None:
         pass
@@ -110,14 +116,24 @@ def _remap_steps(mg: MetaGraph, mapping: dict[int, int]) -> MetaGraph:
 def _token_stream_is_canonical_under_mapping(
     edges: list[tuple[str, str]],
     mapping: dict[str, str],
+    entry: str | None = None,
 ) -> bool:
-    original = encode(_extract_metagraph(edges))
-    relabeled = encode(_extract_metagraph(_relabel_edges(edges, mapping)))
+    relabeled_entry = None if entry is None else mapping[entry]
+    original = encode(_extract_metagraph(edges, entry=entry))
+    relabeled = encode(
+        _extract_metagraph(
+            _relabel_edges(edges, mapping),
+            entry=relabeled_entry,
+        )
+    )
     return original == relabeled
 
 
-def _assert_round_trip(edges: list[tuple[str, str]]) -> None:
-    mg = _extract_metagraph(edges)
+def _assert_round_trip(
+    edges: list[tuple[str, str]],
+    entry: str | None = None,
+) -> None:
+    mg = _extract_metagraph(edges, entry=entry)
     assert decode(encode(mg)) == skeleton_of(mg)
 
 
@@ -211,6 +227,42 @@ def test_simple_loop_encoding_is_invariant_to_node_id_permutation():
     )
 
 
+def test_entry_scc_without_entry_falls_back_to_min_scc_header():
+    mg = _extract_metagraph([
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "A"),
+        ("C", "D"),
+    ])
+
+    loop = mg.motifs[0]
+
+    assert loop.kind == "loop"
+    assert loop.meta["header"] == min(loop.meta["scc"])
+    assert loop.meta["header"] == "A"
+    assert loop.meta["back_edges"] == [("C", "A")]
+
+
+def test_entry_scc_with_entry_selects_declared_header_and_is_canonical():
+    edges = [
+        ("A", "B"),
+        ("B", "C"),
+        ("C", "A"),
+        ("C", "D"),
+    ]
+    mg = _extract_metagraph(edges, entry="A")
+    loop = mg.motifs[0]
+
+    assert loop.kind == "loop"
+    assert loop.meta["header"] == "A"
+    assert loop.meta["back_edges"] == [("C", "A")]
+    assert _token_stream_is_canonical_under_mapping(
+        edges,
+        {"A": "D", "B": "C", "C": "B", "D": "A"},
+        entry="A",
+    )
+
+
 def test_nested_loop_encoding_is_invariant_to_node_id_permutation():
     edges = [
         ("A", "B"),
@@ -258,10 +310,14 @@ def test_decode_encode_round_trip_for_build_cfg_seeds(seed: int):
     edges = _graph_edges(engine)
     mapping = _seed_derived_name_mapping(sorted(engine.node_ids()), seed)
 
-    if not _token_stream_is_canonical_under_mapping(edges, mapping):
+    if not _token_stream_is_canonical_under_mapping(
+        edges,
+        mapping,
+        entry="N00",
+    ):
         pytest.skip(f"seed {seed} is discarded by the canonicality self-check")
 
-    _assert_round_trip(edges)
+    _assert_round_trip(edges, entry="N00")
 
 
 def test_decode_rejects_forward_ptr_reference():

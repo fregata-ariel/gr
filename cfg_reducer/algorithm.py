@@ -148,8 +148,13 @@ class ReductionAlgorithm:
     Call step() repeatedly; it returns the Op applied, or None when done.
     """
 
-    def __init__(self, engine: GraphEngine) -> None:
+    def __init__(
+        self,
+        engine: GraphEngine,
+        entry: str | None = None,
+    ) -> None:
         self.engine = engine
+        self.entry = entry
         self.scope = Scope()
         self.heap: list[tuple[int, str]] = []   # (weight, node_id)
 
@@ -349,6 +354,8 @@ class ReductionAlgorithm:
 
         if external_entries:
             return min(external_entries)
+        if self.entry is not None and self.entry in scc:
+            return self.entry
         return min(scc)
 
     def _collect_terminals(self, candidates: set[str]) -> None:

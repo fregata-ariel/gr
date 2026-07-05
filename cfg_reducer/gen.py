@@ -5,13 +5,41 @@ import random
 from .engine import GraphEngine
 
 
+def _dominators(engine: GraphEngine, entry: str) -> dict[str, set[str]]:
+    nodes = sorted(engine.node_ids())
+    dominators = {node: set(nodes) for node in nodes}
+    dominators[entry] = {entry}
+
+    changed = True
+    while changed:
+        changed = False
+
+        for node in nodes:
+            if node == entry:
+                continue
+
+            predecessors = sorted(engine.predecessors(node))
+            new_dominators = {node}
+            if predecessors:
+                new_dominators |= set.intersection(
+                    *(dominators[pred] for pred in predecessors)
+                )
+
+            if new_dominators != dominators[node]:
+                dominators[node] = new_dominators
+                changed = True
+
+    return dominators
+
+
 def build_cfg(engine: GraphEngine | None = None,
               num_nodes: int = 12,
               edge_prob: float = 0.5,
               seed: int = 42) -> GraphEngine:
     """
     構造ベース＋スパゲティ化のハイブリッドCFG生成。
-    DAG（有向非巡回グラフ）で基本構造を作り、後から安全なループとジャンプを追加する。
+    DAG（有向非巡回グラフ）で基本構造を作り、後から安全なジャンプと
+    reducible（各後方エッジの行き先がその始点を支配する）なループを追加する。
     """
     if engine is None:
         engine = GraphEngine()
@@ -73,17 +101,6 @@ def build_cfg(engine: GraphEngine | None = None,
     # 2. スパゲティ化（ループ・大ジャンプの追加）
     # ──────────────────────────────────────────────
 
-    # [A] ループ（後方エッジ）: while / for の表現
-    num_loops = max(1, int(num_nodes * 0.15))
-    for _ in range(num_loops):
-        j = rng.randint(2, num_nodes - 2)
-        # 戻る先は最低でも2つ前。直前(j-1)には戻さない（双方向エッジの禁止）
-        if j - 2 >= 0:
-            i = rng.randint(0, j - 2)
-            u, v = ids[j], ids[i]
-            if v not in engine.successors(u):
-                engine.add_edge(u, v)
-
     # [B] 大ジャンプ（前方への遠距離エッジ）: break / goto / 例外処理の表現
     num_gotos = max(1, int(num_nodes * 0.1))
     for _ in range(num_gotos):
@@ -93,5 +110,24 @@ def build_cfg(engine: GraphEngine | None = None,
             u, v = ids[i], ids[j]
             if v not in engine.successors(u):
                 engine.add_edge(u, v)
+
+    dominators = _dominators(engine, start_node)
+
+    # [A] ループ（後方エッジ）: while / for の表現
+    num_loops = max(1, int(num_nodes * 0.15))
+    for _ in range(num_loops):
+        j = rng.randint(2, num_nodes - 2)
+        u = ids[j]
+        candidates = sorted(
+            candidate
+            for candidate in dominators[u]
+            if candidate in ids[:j-1]
+            and candidate not in engine.successors(u)
+        )
+        if not candidates:
+            continue
+
+        v = rng.choice(candidates)
+        engine.add_edge(u, v)
 
     return engine
