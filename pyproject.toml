@@ -17,3 +17,11 @@ dev = [
     "pytest>=8.0",
     "ty>=0.0.51",
 ]
+train = [
+    "array-record>=0.8.3 ; sys_platform == 'linux'",
+    "flax>=0.12.7",
+    "grain>=0.2.18 ; sys_platform == 'linux'",
+    "jax>=0.10.2",
+    "optax>=0.2.8",
+    "orbax-checkpoint>=0.12.1",
+]
