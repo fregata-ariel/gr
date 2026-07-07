@@ -95,10 +95,10 @@ def tarjan_scc(node_ids: set[str], succ_fn) -> list[set[str]]:
                 stack.append(node)
 
                 # Collect children (only within node_ids)
-                children = [
+                children = sorted(
                     s for s in succ_fn(node)
                     if s in node_ids
-                ]
+                )
                 ci = 0
 
             # Process children from where we left off
@@ -324,6 +324,7 @@ class ReductionAlgorithm:
         Choose an SCC with no out-edges leaving it (within scope).
         Among candidates, pick the smallest for determinism.
         """
+        terminal_sccs: list[set[str]] = []
         for scc in sccs:
             if len(scc) < 2:
                 continue
@@ -334,11 +335,20 @@ class ReductionAlgorithm:
                 if s in scope
             )
             if not has_exit:
-                return scc
+                terminal_sccs.append(scc)
+
+        if terminal_sccs:
+            return min(
+                terminal_sccs,
+                key=lambda scc: (len(scc), tuple(sorted(scc))),
+            )
 
         # Fallback: largest non-trivial SCC (should not normally reach here)
         non_trivial = [s for s in sccs if len(s) >= 2]
-        return max(non_trivial, key=len)
+        return max(
+            non_trivial,
+            key=lambda scc: (len(scc), tuple(sorted(scc))),
+        )
 
     def _identify_header(self, scc: set[str]) -> str:
         """
