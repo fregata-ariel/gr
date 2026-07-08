@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from poc0.eval import evaluate_samples, write_eval_report
+from poc0.sample import SampleResult
+
+
+def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
+    with path.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record))
+            fh.write("\n")
+
+
+def _write_manifest(path: Path, train_record_ids: list[str]) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "splits": {
+                    "train": {
+                        "record_ids": train_record_ids,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_eval_validity_uses_decode_and_sampler_termination(tmp_path: Path):
+    jsonl_path = tmp_path / "records.jsonl"
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            }
+        ],
+    )
+
+    report = evaluate_samples(
+        samples=[
+            SampleResult(tokens=["ADD_ENTRY", "STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["OPEN", "STOP"], success=True, invalid_reason=None, depth=1),
+            SampleResult(tokens=["OPEN"], success=False, invalid_reason="length_cap", depth=1),
+        ],
+        jsonl_path=jsonl_path,
+    )
+
+    assert report["valid_count"] == 1
+    assert report["invalid_count"] == 2
+    assert report["invalid_reasons"] == {
+        "length_cap": 1,
+        "negative_depth": 0,
+        "decode_error": 1,
+    }
+
+
+def test_eval_novelty_counts_only_valid_samples(tmp_path: Path):
+    jsonl_path = tmp_path / "records.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            }
+        ],
+    )
+    _write_manifest(manifest_path, ["train-1"])
+
+    report = evaluate_samples(
+        samples=[
+            SampleResult(tokens=["ADD_ENTRY", "STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["ADD_LINEAR", "STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["OPEN"], success=False, invalid_reason="length_cap", depth=1),
+        ],
+        jsonl_path=jsonl_path,
+        manifest_path=manifest_path,
+    )
+
+    assert report["valid_count"] == 2
+    assert report["novelty_rate"] == 0.5
+    assert report["duplicate_of_train_rate"] == 0.5
+    assert report["unique_valid_count"] == 2
+    assert report["repeated_valid_count"] == 0
+
+
+def test_eval_report_contains_required_metrics(tmp_path: Path):
+    jsonl_path = tmp_path / "records.jsonl"
+    out_dir = tmp_path / "eval_out"
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            }
+        ],
+    )
+
+    report = evaluate_samples(
+        samples=[
+            SampleResult(tokens=["ADD_ENTRY", "STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["ADD_LINEAR", "STOP"], success=True, invalid_reason=None, depth=0),
+        ],
+        jsonl_path=jsonl_path,
+    )
+    metrics_path = write_eval_report(report=report, out_dir=out_dir)
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+    assert metrics_path == out_dir / "metrics.json"
+    assert "validity_rate" in metrics
+    assert "novelty_rate" in metrics
+    assert "duplicate_of_train_rate" in metrics
+    assert "stat_tvd" in metrics
+    assert "histograms" in metrics
+    assert (out_dir / "n_motifs.png").exists()
+    assert (out_dir / "kinds.entry.png").exists()
+
+    expected_stats = {
+        "n_motifs",
+        "n_tokens",
+        "depth",
+        "max_width",
+        "loop_nest",
+        "kinds.entry",
+        "kinds.linear",
+        "kinds.merge",
+        "kinds.loop",
+    }
+    assert set(metrics["stat_tvd"]) == expected_stats
