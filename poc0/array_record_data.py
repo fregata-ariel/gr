@@ -109,6 +109,11 @@ def _arrayrecord_reader(path: Path) -> Any | None:
 
 def _iter_reader_records(reader: Any) -> Iterator[bytes]:
     try:
+        if hasattr(reader, "read_all"):
+            for record in reader.read_all():
+                yield bytes(record)
+            return
+
         if hasattr(reader, "__iter__"):
             for record in reader:
                 yield bytes(record)
