@@ -47,9 +47,27 @@ def _load_array_record_module(operation: str) -> Any:
     raise RuntimeError(f"{operation} requires array_record on Linux for poc0 conversion")
 
 
+def _find_array_record_class(operation: str, class_name: str) -> Any | None:
+    _require_linux(operation)
+    candidates = (
+        "array_record",
+        "array_record.python.array_record_module",
+    )
+    for module_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        found_class = getattr(module, class_name, None)
+        if found_class is not None:
+            return found_class
+    return None
+
+
 def _arrayrecord_writer(path: Path) -> Any:
-    module = _load_array_record_module("convert_jsonl_to_arrayrecord")
-    writer_class = getattr(module, "ArrayRecordWriter", None)
+    writer_class = _find_array_record_class(
+        "convert_jsonl_to_arrayrecord", "ArrayRecordWriter"
+    )
     if writer_class is None:
         raise RuntimeError("array_record does not expose ArrayRecordWriter")
 
@@ -70,8 +88,9 @@ def _arrayrecord_writer(path: Path) -> Any:
 
 
 def _arrayrecord_reader(path: Path) -> Any | None:
-    module = _load_array_record_module("GrainArrayRecordDataset")
-    reader_class = getattr(module, "ArrayRecordReader", None)
+    reader_class = _find_array_record_class(
+        "GrainArrayRecordDataset", "ArrayRecordReader"
+    )
     if reader_class is None:
         return None
 
