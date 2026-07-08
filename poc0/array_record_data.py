@@ -149,6 +149,22 @@ def _serialize_example(record_id: str, example: TokenExample) -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
+def _validate_int_list(field_name: str, values: list[object]) -> None:
+    for index, value in enumerate(values):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"ArrayRecord {field_name}[{index}] must be an int, got {type(value).__name__}"
+            )
+
+
+def _validate_bool_list(field_name: str, values: list[object]) -> None:
+    for index, value in enumerate(values):
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"ArrayRecord {field_name}[{index}] must be a bool, got {type(value).__name__}"
+            )
+
+
 def _deserialize_example(payload: bytes) -> tuple[str, TokenExample]:
     record = json.loads(payload)
     if not isinstance(record, dict):
@@ -165,6 +181,10 @@ def _deserialize_example(payload: bytes) -> tuple[str, TokenExample]:
         raise ValueError("ArrayRecord item is missing token id arrays")
     if not isinstance(loss_mask, list):
         raise ValueError("ArrayRecord item is missing loss_mask")
+
+    _validate_int_list("input_ids", input_ids)
+    _validate_int_list("target_ids", target_ids)
+    _validate_bool_list("loss_mask", loss_mask)
 
     input_array = np.asarray(input_ids, dtype=np.int32)
     target_array = np.asarray(target_ids, dtype=np.int32)

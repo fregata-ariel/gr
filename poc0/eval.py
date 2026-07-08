@@ -228,6 +228,7 @@ def evaluate_samples(
         InvalidSampleReason.NEGATIVE_DEPTH.value: 0,
         InvalidSampleReason.DECODE_ERROR.value: 0,
     }
+    empty_stream_count = 0
 
     valid_strings: list[str] = []
     valid_flat_stats: list[dict[str, int]] = []
@@ -243,11 +244,15 @@ def evaluate_samples(
             invalid_reasons[InvalidSampleReason.DECODE_ERROR.value] += 1
             continue
 
+        if not skeleton.items:
+            empty_stream_count += 1
+            continue
+
         valid_strings.append(_token_key(sample.tokens))
         valid_flat_stats.append(_flatten_stats(stats_for_skeleton(skeleton, sample.tokens)))
 
     valid_count = len(valid_strings)
-    invalid_count = len(samples) - valid_count
+    invalid_count = len(samples) - valid_count - empty_stream_count
     duplicate_of_train_count = sum(token_key in train_strings for token_key in valid_strings)
     novel_count = valid_count - duplicate_of_train_count
     unique_valid_count = len(set(valid_strings))
@@ -270,7 +275,9 @@ def evaluate_samples(
         "train_record_count": len(train_records),
         "valid_count": valid_count,
         "invalid_count": invalid_count,
+        "empty_stream_count": empty_stream_count,
         "validity_rate": 0.0 if not samples else valid_count / len(samples),
+        "empty_stream_rate": 0.0 if not samples else empty_stream_count / len(samples),
         "invalid_reasons": invalid_reasons,
         "novelty_rate": 0.0 if valid_count == 0 else novel_count / valid_count,
         "duplicate_of_train_rate": (

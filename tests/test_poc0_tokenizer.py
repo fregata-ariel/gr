@@ -125,3 +125,8 @@ def test_tokenizer_rejects_unknown_token_and_pointer_overflow():
 
     with pytest.raises(ValueError, match="ptr_32"):
         record_to_example(["ADD_ENTRY", "ptr_32", "STOP"])
+
+
+def test_record_to_example_rejects_empty_token_list():
+    with pytest.raises(ValueError, match="empty"):
+        record_to_example([])

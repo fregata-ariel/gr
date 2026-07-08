@@ -110,6 +110,37 @@ def test_require_linux_raises_clear_error_off_linux(monkeypatch: pytest.MonkeyPa
         array_record_data._require_linux("convert_jsonl_to_arrayrecord")
 
 
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("input_ids", [1.9] * MAX_SEQ_LEN),
+        ("input_ids", ["1"] * MAX_SEQ_LEN),
+        ("input_ids", [True] * MAX_SEQ_LEN),
+        ("target_ids", [1.9] * MAX_SEQ_LEN),
+        ("target_ids", ["1"] * MAX_SEQ_LEN),
+        ("target_ids", [False] * MAX_SEQ_LEN),
+        ("loss_mask", [1] * MAX_SEQ_LEN),
+        ("loss_mask", ["yes"] * MAX_SEQ_LEN),
+    ],
+)
+def test_deserialize_example_rejects_invalid_element_types_before_coercion(
+    field_name: str,
+    field_value: list[object],
+):
+    payload = {
+        "record_id": "record-01",
+        "input_ids": [0] * MAX_SEQ_LEN,
+        "target_ids": [0] * MAX_SEQ_LEN,
+        "loss_mask": [False] * MAX_SEQ_LEN,
+    }
+    payload[field_name] = field_value
+
+    with pytest.raises(ValueError, match=field_name):
+        array_record_data._deserialize_example(
+            json.dumps(payload).encode("utf-8")
+        )
+
+
 def test_arrayrecord_smoke_matches_in_memory_source_or_skips(tmp_path: Path):
     if sys.platform != "linux":
         pytest.skip("requires Linux")

@@ -43,6 +43,9 @@ def ids_to_tokens(token_ids: Iterable[int]) -> list[str]:
 
 
 def record_to_example(raw_tokens: list[str]) -> TokenExample:
+    if not raw_tokens:
+        raise ValueError("Raw record must not be empty")
+
     for token in raw_tokens:
         if token == BOS_TOKEN or token == PAD_TOKEN:
             raise ValueError(f"Raw record must not include special token: {token}")

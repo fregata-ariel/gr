@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -108,6 +109,59 @@ def test_eval_novelty_counts_only_valid_samples(tmp_path: Path):
     assert report["repeated_valid_count"] == 0
 
 
+def test_eval_tracks_empty_streams_separately_from_valid_and_invalid(tmp_path: Path):
+    jsonl_path = tmp_path / "records.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            }
+        ],
+    )
+    _write_manifest(manifest_path, ["train-1"])
+
+    report = evaluate_samples(
+        samples=[
+            SampleResult(tokens=["STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["ADD_ENTRY", "STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["ADD_LINEAR", "STOP"], success=True, invalid_reason=None, depth=0),
+            SampleResult(tokens=["OPEN"], success=False, invalid_reason="length_cap", depth=1),
+        ],
+        jsonl_path=jsonl_path,
+        manifest_path=manifest_path,
+    )
+
+    assert report["n_samples"] == 4
+    assert report["empty_stream_count"] == 1
+    assert report["empty_stream_rate"] == 0.25
+    assert report["valid_count"] == 2
+    assert report["invalid_count"] == 1
+    assert report["validity_rate"] == 0.5
+    assert report["invalid_reasons"] == {
+        "length_cap": 1,
+        "negative_depth": 0,
+        "decode_error": 0,
+    }
+    assert report["novelty_rate"] == 0.5
+    assert report["duplicate_of_train_rate"] == 0.5
+    assert report["unique_valid_count"] == 2
+    assert report["repeated_valid_count"] == 0
+    histograms = cast(dict[str, object], report["histograms"])
+    n_motifs_histogram = cast(dict[str, object], histograms["n_motifs"])
+    assert n_motifs_histogram["sample_counts"] == {1: 2}
+
+
 def test_eval_report_contains_required_metrics(tmp_path: Path):
     jsonl_path = tmp_path / "records.jsonl"
     out_dir = tmp_path / "eval_out"
@@ -140,6 +194,8 @@ def test_eval_report_contains_required_metrics(tmp_path: Path):
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
 
     assert metrics_path == out_dir / "metrics.json"
+    assert "empty_stream_count" in metrics
+    assert "empty_stream_rate" in metrics
     assert "validity_rate" in metrics
     assert "novelty_rate" in metrics
     assert "duplicate_of_train_rate" in metrics

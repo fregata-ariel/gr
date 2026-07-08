@@ -63,3 +63,16 @@ def test_length_cap_without_top_level_stop_is_invalid():
     assert result.invalid_reason == InvalidSampleReason.LENGTH_CAP
     assert len(result.tokens) == MAX_SEQ_LEN - 1
     assert result.tokens == ["OPEN"] * (MAX_SEQ_LEN - 1)
+
+
+def test_negative_depth_returns_invalid_reason():
+    result = sample_tokens(
+        logits_fn=_scripted_logits_fn([TOKEN_TO_ID["CLOSE"]]),
+        temperature=1.0,
+        rng=jax.random.key(3),
+    )
+
+    assert result.success is False
+    assert result.invalid_reason == InvalidSampleReason.NEGATIVE_DEPTH
+    assert result.tokens == ["CLOSE"]
+    assert result.depth == -1
