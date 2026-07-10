@@ -43,6 +43,19 @@ class _JsonlRecord:
     stats: dict[str, object] | None
 
 
+@dataclass(frozen=True)
+class _ClassifiedSample:
+    index: int
+    tokens: list[str]
+    success: bool
+    invalid_reason: str | None
+    decode_error: str | None
+    empty_stream: bool
+    in_train: bool | None
+    flat_stats: dict[str, int] | None
+    token_key: str | None
+
+
 def _load_jsonl_records(jsonl_path: Path) -> list[_JsonlRecord]:
     records: list[_JsonlRecord] = []
     with Path(jsonl_path).open("r", encoding="utf-8") as fh:
@@ -208,12 +221,73 @@ def _build_histogram_report(
     }
 
 
-def evaluate_samples(
+def _classify_sample(
+    *,
+    sample: SampleResult,
+    train_strings: set[str],
+    index: int,
+) -> _ClassifiedSample:
+    if not sample.success:
+        return _ClassifiedSample(
+            index=index,
+            tokens=sample.tokens,
+            success=sample.success,
+            invalid_reason=_reason_key(sample.invalid_reason),
+            decode_error=None,
+            empty_stream=False,
+            in_train=None,
+            flat_stats=None,
+            token_key=None,
+        )
+
+    try:
+        skeleton = decode(sample.tokens)
+    except ValueError as exc:
+        return _ClassifiedSample(
+            index=index,
+            tokens=sample.tokens,
+            success=sample.success,
+            invalid_reason=InvalidSampleReason.DECODE_ERROR.value,
+            decode_error=str(exc),
+            empty_stream=False,
+            in_train=None,
+            flat_stats=None,
+            token_key=None,
+        )
+
+    if not skeleton.items:
+        return _ClassifiedSample(
+            index=index,
+            tokens=sample.tokens,
+            success=sample.success,
+            invalid_reason=None,
+            decode_error=None,
+            empty_stream=True,
+            in_train=None,
+            flat_stats=None,
+            token_key=None,
+        )
+
+    token_key = _token_key(sample.tokens)
+    return _ClassifiedSample(
+        index=index,
+        tokens=sample.tokens,
+        success=sample.success,
+        invalid_reason=None,
+        decode_error=None,
+        empty_stream=False,
+        in_train=token_key in train_strings,
+        flat_stats=_flatten_stats(stats_for_skeleton(skeleton, sample.tokens)),
+        token_key=token_key,
+    )
+
+
+def _evaluate_samples_with_classifications(
     *,
     samples: Sequence[SampleResult],
     jsonl_path: Path,
     manifest_path: Path | None = None,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], list[_ClassifiedSample]]:
     train_records = _resolve_train_records(
         jsonl_path=jsonl_path,
         manifest_path=manifest_path,
@@ -223,33 +297,31 @@ def evaluate_samples(
     train_strings = {_token_key(record.tokens) for record in train_records}
     train_flat_stats = [_train_record_stats(record) for record in train_records]
 
+    classifications = [
+        _classify_sample(sample=sample, train_strings=train_strings, index=index)
+        for index, sample in enumerate(samples)
+    ]
+
     invalid_reasons = {
         InvalidSampleReason.LENGTH_CAP.value: 0,
         InvalidSampleReason.NEGATIVE_DEPTH.value: 0,
         InvalidSampleReason.DECODE_ERROR.value: 0,
     }
     empty_stream_count = 0
-
     valid_strings: list[str] = []
     valid_flat_stats: list[dict[str, int]] = []
 
-    for sample in samples:
-        if not sample.success:
-            invalid_reasons[_reason_key(sample.invalid_reason)] += 1
+    for classified in classifications:
+        if classified.invalid_reason is not None:
+            invalid_reasons[classified.invalid_reason] += 1
             continue
-
-        try:
-            skeleton = decode(sample.tokens)
-        except ValueError:
-            invalid_reasons[InvalidSampleReason.DECODE_ERROR.value] += 1
-            continue
-
-        if not skeleton.items:
+        if classified.empty_stream:
             empty_stream_count += 1
             continue
-
-        valid_strings.append(_token_key(sample.tokens))
-        valid_flat_stats.append(_flatten_stats(stats_for_skeleton(skeleton, sample.tokens)))
+        assert classified.token_key is not None
+        assert classified.flat_stats is not None
+        valid_strings.append(classified.token_key)
+        valid_flat_stats.append(classified.flat_stats)
 
     valid_count = len(valid_strings)
     invalid_count = len(samples) - valid_count - empty_stream_count
@@ -270,24 +342,66 @@ def evaluate_samples(
         histograms[stat_name] = histogram
         stat_tvd[stat_name] = _as_float(histogram["tvd"])
 
-    return {
-        "n_samples": len(samples),
-        "train_record_count": len(train_records),
-        "valid_count": valid_count,
-        "invalid_count": invalid_count,
-        "empty_stream_count": empty_stream_count,
-        "validity_rate": 0.0 if not samples else valid_count / len(samples),
-        "empty_stream_rate": 0.0 if not samples else empty_stream_count / len(samples),
-        "invalid_reasons": invalid_reasons,
-        "novelty_rate": 0.0 if valid_count == 0 else novel_count / valid_count,
-        "duplicate_of_train_rate": (
-            0.0 if valid_count == 0 else duplicate_of_train_count / valid_count
-        ),
-        "unique_valid_count": unique_valid_count,
-        "repeated_valid_count": repeated_valid_count,
-        "stat_tvd": stat_tvd,
-        "histograms": histograms,
-    }
+    return (
+        {
+            "n_samples": len(samples),
+            "train_record_count": len(train_records),
+            "valid_count": valid_count,
+            "invalid_count": invalid_count,
+            "empty_stream_count": empty_stream_count,
+            "validity_rate": 0.0 if not samples else valid_count / len(samples),
+            "empty_stream_rate": 0.0 if not samples else empty_stream_count / len(samples),
+            "invalid_reasons": invalid_reasons,
+            "novelty_rate": 0.0 if valid_count == 0 else novel_count / valid_count,
+            "duplicate_of_train_rate": (
+                0.0 if valid_count == 0 else duplicate_of_train_count / valid_count
+            ),
+            "unique_valid_count": unique_valid_count,
+            "repeated_valid_count": repeated_valid_count,
+            "stat_tvd": stat_tvd,
+            "histograms": histograms,
+        },
+        classifications,
+    )
+
+
+def evaluate_samples(
+    *,
+    samples: Sequence[SampleResult],
+    jsonl_path: Path,
+    manifest_path: Path | None = None,
+) -> dict[str, object]:
+    report, _ = _evaluate_samples_with_classifications(
+        samples=samples,
+        jsonl_path=jsonl_path,
+        manifest_path=manifest_path,
+    )
+    return report
+
+
+def _write_sample_dump(
+    *,
+    samples: Sequence[_ClassifiedSample],
+    dump_path: Path,
+) -> None:
+    dump_path = Path(dump_path)
+    with dump_path.open("w", encoding="utf-8") as fh:
+        for sample in samples:
+            fh.write(
+                json.dumps(
+                    {
+                        "index": sample.index,
+                        "tokens": sample.tokens,
+                        "success": sample.success,
+                        "invalid_reason": sample.invalid_reason,
+                        "decode_error": sample.decode_error,
+                        "empty_stream": sample.empty_stream,
+                        "in_train": sample.in_train,
+                    },
+                    sort_keys=True,
+                )
+            )
+            fh.write("\n")
 
 
 def _plot_histogram_overlay(
@@ -356,6 +470,7 @@ def evaluate_checkpoint(
     temperature: float,
     seed: int,
     manifest_path: Path | None = None,
+    dump_samples_path: Path | None = None,
 ) -> dict[str, object]:
     logits_fn, checkpoint_manifest = restore_logits_fn_from_checkpoint(checkpoint_path)
     rng = jax.random.key(seed)
@@ -370,7 +485,7 @@ def evaluate_checkpoint(
             )
         )
 
-    report = evaluate_samples(
+    report, classifications = _evaluate_samples_with_classifications(
         samples=samples,
         jsonl_path=jsonl_path,
         manifest_path=manifest_path,
@@ -379,6 +494,8 @@ def evaluate_checkpoint(
     report["temperature"] = float(temperature)
     report["seed"] = int(seed)
     report["checkpoint_manifest"] = checkpoint_manifest
+    if dump_samples_path is not None:
+        _write_sample_dump(samples=classifications, dump_path=dump_samples_path)
     write_eval_report(report=report, out_dir=out_dir)
     return report
 
@@ -392,6 +509,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-samples", type=int, default=1000)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=SAMPLING_SEED)
+    parser.add_argument("--dump-samples", type=Path)
     return parser
 
 
@@ -409,6 +527,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         n_samples=args.n_samples,
         temperature=args.temperature,
         seed=args.seed,
+        dump_samples_path=args.dump_samples,
     )
     print(json.dumps(report, sort_keys=True))
     return 0
