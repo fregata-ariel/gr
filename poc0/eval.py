@@ -385,6 +385,7 @@ def _write_sample_dump(
     dump_path: Path,
 ) -> None:
     dump_path = Path(dump_path)
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
     with dump_path.open("w", encoding="utf-8") as fh:
         for sample in samples:
             fh.write(

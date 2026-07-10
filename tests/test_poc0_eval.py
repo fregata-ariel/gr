@@ -228,7 +228,9 @@ def test_eval_cli_dump_samples_uses_eval_classification_and_keeps_metrics_identi
     checkpoint_path = tmp_path / "checkpoint"
     out_dir_plain = tmp_path / "eval_plain"
     out_dir_dump = tmp_path / "eval_dump"
-    dump_path = tmp_path / "samples.jsonl"
+    # Nested nonexistent directory: the dump writer must create parents
+    # (regression: first Colab run crashed with FileNotFoundError).
+    dump_path = tmp_path / "nested" / "dump_dir" / "samples.jsonl"
 
     _write_jsonl(
         jsonl_path,
