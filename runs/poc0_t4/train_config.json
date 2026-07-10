@@ -1,0 +1,17 @@
+{
+  "batch_size": 256,
+  "ckpt_every": 500,
+  "dataset_kind": "array_record",
+  "end_lr": 3e-05,
+  "eval_every": 100,
+  "max_seq_len": 80,
+  "peak_lr": 0.0003,
+  "seed": 20260709,
+  "steps": 3000,
+  "train_records": 19661,
+  "train_shuffle_seed": 20260708,
+  "val_records": 1035,
+  "vocab_size": 41,
+  "warmup_steps": 200,
+  "weight_decay": 0.01
+}
