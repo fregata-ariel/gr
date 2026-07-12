@@ -472,6 +472,7 @@ def evaluate_checkpoint(
     seed: int,
     manifest_path: Path | None = None,
     dump_samples_path: Path | None = None,
+    constrained: bool = False,
 ) -> dict[str, object]:
     logits_fn, checkpoint_manifest = restore_logits_fn_from_checkpoint(checkpoint_path)
     rng = jax.random.key(seed)
@@ -483,6 +484,7 @@ def evaluate_checkpoint(
                 logits_fn=logits_fn,
                 temperature=temperature,
                 rng=sample_rng,
+                constrained=constrained,
             )
         )
 
@@ -495,6 +497,7 @@ def evaluate_checkpoint(
     report["temperature"] = float(temperature)
     report["seed"] = int(seed)
     report["checkpoint_manifest"] = checkpoint_manifest
+    report["constrained"] = bool(constrained)
     if dump_samples_path is not None:
         _write_sample_dump(samples=classifications, dump_path=dump_samples_path)
     write_eval_report(report=report, out_dir=out_dir)
@@ -510,6 +513,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-samples", type=int, default=1000)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=SAMPLING_SEED)
+    parser.add_argument("--constrained", action="store_true")
     parser.add_argument("--dump-samples", type=Path)
     return parser
 
@@ -528,6 +532,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         n_samples=args.n_samples,
         temperature=args.temperature,
         seed=args.seed,
+        constrained=args.constrained,
         dump_samples_path=args.dump_samples,
     )
     print(json.dumps(report, sort_keys=True))

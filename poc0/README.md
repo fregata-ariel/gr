@@ -88,6 +88,10 @@ Cell 5, eval. This command becomes available in Stage 4:
   --seed 20260710
 ```
 
+Optional flags:
+- `--constrained`: enable grammar-constrained sampling during eval.
+- `--dump-samples PATH`: write per-sample classification records as JSONL.
+
 Cell 6, inspect summary. This becomes useful once Stage 4 eval outputs exist:
 
 ```sh

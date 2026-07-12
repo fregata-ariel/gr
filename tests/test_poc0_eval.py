@@ -278,9 +278,16 @@ def test_eval_cli_dump_samples_uses_eval_classification_and_keeps_metrics_identi
         assert path == checkpoint_path
         return (object(), {"step": 123})
 
-    def fake_sample_tokens(*, logits_fn: object, temperature: float, rng: object) -> SampleResult:
+    def fake_sample_tokens(
+        *,
+        logits_fn: object,
+        temperature: float,
+        rng: object,
+        constrained: bool = False,
+    ) -> SampleResult:
         assert logits_fn is not None
         assert temperature == 1.0
+        assert constrained is False
         return next(sample_iter)
 
     monkeypatch.setattr(
@@ -385,6 +392,349 @@ def test_eval_cli_dump_samples_uses_eval_classification_and_keeps_metrics_identi
         },
         {
             "index": 5,
+            "tokens": ["OPEN", "STOP"],
+            "success": True,
+            "invalid_reason": "decode_error",
+            "decode_error": "unknown token 'OPEN' at position 0",
+            "empty_stream": False,
+            "in_train": None,
+        },
+    ]
+
+
+def test_eval_parse_args_constrained_default_false():
+    args = eval_module.parse_args(
+        [
+            "--checkpoint",
+            "checkpoint",
+            "--jsonl",
+            "records.jsonl",
+            "--out-dir",
+            "eval_out",
+        ]
+    )
+    assert args.constrained is False
+
+    constrained_args = eval_module.parse_args(
+        [
+            "--checkpoint",
+            "checkpoint",
+            "--jsonl",
+            "records.jsonl",
+            "--out-dir",
+            "eval_out",
+            "--constrained",
+        ]
+    )
+    assert constrained_args.constrained is True
+
+
+@pytest.mark.parametrize("constrained", [False, True])
+def test_evaluate_checkpoint_passes_constrained_to_sampler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    constrained: bool,
+):
+    jsonl_path = tmp_path / "records.jsonl"
+    checkpoint_path = tmp_path / "checkpoint"
+    out_dir = tmp_path / "eval_out"
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            }
+        ],
+    )
+
+    seen_constrained: list[bool] = []
+
+    def fake_restore_logits_fn_from_checkpoint(path: Path):
+        assert path == checkpoint_path
+        return (object(), {"step": 123})
+
+    def fake_sample_tokens(
+        *,
+        logits_fn: object,
+        temperature: float,
+        rng: object,
+        constrained: bool = False,
+    ) -> SampleResult:
+        assert logits_fn is not None
+        assert temperature == 1.0
+        seen_constrained.append(constrained)
+        return SampleResult(
+            tokens=["ADD_ENTRY", "STOP"],
+            success=True,
+            invalid_reason=None,
+            depth=0,
+        )
+
+    monkeypatch.setattr(
+        eval_module,
+        "restore_logits_fn_from_checkpoint",
+        fake_restore_logits_fn_from_checkpoint,
+    )
+    monkeypatch.setattr(eval_module, "sample_tokens", fake_sample_tokens)
+
+    report = eval_module.evaluate_checkpoint(
+        checkpoint_path=checkpoint_path,
+        jsonl_path=jsonl_path,
+        out_dir=out_dir,
+        n_samples=3,
+        temperature=1.0,
+        seed=123,
+        constrained=constrained,
+    )
+
+    assert seen_constrained == [constrained, constrained, constrained]
+    assert report["constrained"] is constrained
+
+
+@pytest.mark.parametrize("constrained", [False, True])
+def test_metrics_json_records_constrained_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    constrained: bool,
+):
+    jsonl_path = tmp_path / "records.jsonl"
+    checkpoint_path = tmp_path / "checkpoint"
+    out_dir = tmp_path / "eval_out"
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            }
+        ],
+    )
+
+    def fake_restore_logits_fn_from_checkpoint(path: Path):
+        assert path == checkpoint_path
+        return (object(), {"step": 123})
+
+    def fake_sample_tokens(
+        *,
+        logits_fn: object,
+        temperature: float,
+        rng: object,
+        constrained: bool = False,
+    ) -> SampleResult:
+        assert logits_fn is not None
+        assert temperature == 1.0
+        assert constrained is constrained_value
+        return SampleResult(
+            tokens=["ADD_ENTRY", "STOP"],
+            success=True,
+            invalid_reason=None,
+            depth=0,
+        )
+
+    monkeypatch.setattr(
+        eval_module,
+        "restore_logits_fn_from_checkpoint",
+        fake_restore_logits_fn_from_checkpoint,
+    )
+    monkeypatch.setattr(eval_module, "sample_tokens", fake_sample_tokens)
+
+    constrained_value = constrained
+
+    report = eval_module.evaluate_checkpoint(
+        checkpoint_path=checkpoint_path,
+        jsonl_path=jsonl_path,
+        out_dir=out_dir,
+        n_samples=1,
+        temperature=1.0,
+        seed=123,
+        constrained=constrained_value,
+    )
+
+    metrics = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert report["constrained"] is constrained_value
+    assert metrics["constrained"] is constrained_value
+
+
+def test_dump_samples_interaction_with_constrained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    jsonl_path = tmp_path / "records.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    checkpoint_path = tmp_path / "checkpoint"
+    out_dir_plain = tmp_path / "eval_plain"
+    out_dir_dump = tmp_path / "eval_dump"
+    dump_path = tmp_path / "nested" / "dump_dir" / "samples.jsonl"
+
+    _write_jsonl(
+        jsonl_path,
+        [
+            {
+                "id": "train-1",
+                "tokens": ["ADD_ENTRY", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 1, "linear": 0, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            },
+            {
+                "id": "train-2",
+                "tokens": ["ADD_LINEAR", "STOP"],
+                "stats": {
+                    "n_motifs": 1,
+                    "kinds": {"entry": 0, "linear": 1, "merge": 0, "loop": 0},
+                    "n_tokens": 2,
+                    "depth": 1,
+                    "max_width": 1,
+                    "loop_nest": 0,
+                },
+            },
+        ],
+    )
+    _write_manifest(manifest_path, ["train-1"])
+
+    scripted_samples = [
+        SampleResult(tokens=["ADD_MERGE", "STOP"], success=True, invalid_reason=None, depth=0),
+        SampleResult(tokens=["ADD_ENTRY", "STOP"], success=True, invalid_reason=None, depth=0),
+        SampleResult(tokens=["STOP"], success=True, invalid_reason=None, depth=0),
+        SampleResult(tokens=["ADD_LOOP", "OPEN"], success=False, invalid_reason="length_cap", depth=1),
+        SampleResult(tokens=["OPEN", "STOP"], success=True, invalid_reason=None, depth=1),
+    ]
+
+    sample_iter = iter(())
+
+    def fake_restore_logits_fn_from_checkpoint(path: Path):
+        assert path == checkpoint_path
+        return (object(), {"step": 123})
+
+    def fake_sample_tokens(
+        *,
+        logits_fn: object,
+        temperature: float,
+        rng: object,
+        constrained: bool = False,
+    ) -> SampleResult:
+        assert logits_fn is not None
+        assert temperature == 1.0
+        assert constrained is True
+        return next(sample_iter)
+
+    monkeypatch.setattr(
+        eval_module,
+        "restore_logits_fn_from_checkpoint",
+        fake_restore_logits_fn_from_checkpoint,
+    )
+    monkeypatch.setattr(eval_module, "sample_tokens", fake_sample_tokens)
+
+    sample_iter = iter(scripted_samples)
+    assert (
+        eval_module.main(
+            [
+                "--checkpoint",
+                str(checkpoint_path),
+                "--jsonl",
+                str(jsonl_path),
+                "--manifest",
+                str(manifest_path),
+                "--out-dir",
+                str(out_dir_plain),
+                "--n-samples",
+                str(len(scripted_samples)),
+                "--constrained",
+            ]
+        )
+        == 0
+    )
+
+    metrics_plain = (out_dir_plain / "metrics.json").read_bytes()
+
+    sample_iter = iter(scripted_samples)
+    assert (
+        eval_module.main(
+            [
+                "--checkpoint",
+                str(checkpoint_path),
+                "--jsonl",
+                str(jsonl_path),
+                "--manifest",
+                str(manifest_path),
+                "--out-dir",
+                str(out_dir_dump),
+                "--n-samples",
+                str(len(scripted_samples)),
+                "--constrained",
+                "--dump-samples",
+                str(dump_path),
+            ]
+        )
+        == 0
+    )
+
+    assert (out_dir_dump / "metrics.json").read_bytes() == metrics_plain
+    dump_records = [
+        json.loads(line)
+        for line in dump_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert dump_records == [
+        {
+            "index": 0,
+            "tokens": ["ADD_MERGE", "STOP"],
+            "success": True,
+            "invalid_reason": None,
+            "decode_error": None,
+            "empty_stream": False,
+            "in_train": False,
+        },
+        {
+            "index": 1,
+            "tokens": ["ADD_ENTRY", "STOP"],
+            "success": True,
+            "invalid_reason": None,
+            "decode_error": None,
+            "empty_stream": False,
+            "in_train": True,
+        },
+        {
+            "index": 2,
+            "tokens": ["STOP"],
+            "success": True,
+            "invalid_reason": None,
+            "decode_error": None,
+            "empty_stream": True,
+            "in_train": None,
+        },
+        {
+            "index": 3,
+            "tokens": ["ADD_LOOP", "OPEN"],
+            "success": False,
+            "invalid_reason": "length_cap",
+            "decode_error": None,
+            "empty_stream": False,
+            "in_train": None,
+        },
+        {
+            "index": 4,
             "tokens": ["OPEN", "STOP"],
             "success": True,
             "invalid_reason": "decode_error",
