@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from poc0.constants import MAX_SEQ_LEN, VOCAB, VOCAB_SIZE
 from poc0.data import Batch, BatchSource, DatasetInfo, InMemoryTokenDataset
+from poc0.grammar import GrammarTracker
 from poc0.model import CausalTransformerLM, TransformerConfig
 from poc0.sample import SampleResult, sample_tokens
 from poc0.stats import stats_for_skeleton
@@ -12,6 +13,7 @@ __all__ = [
     "BatchSource",
     "CausalTransformerLM",
     "DatasetInfo",
+    "GrammarTracker",
     "InMemoryTokenDataset",
     "MAX_SEQ_LEN",
     "SampleResult",

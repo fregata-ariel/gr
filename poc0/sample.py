@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 from poc0.checkpoints import restore_checkpoint
 from poc0.constants import BOS_ID, MAX_SEQ_LEN, PAD_ID, VOCAB_SIZE
+from poc0.grammar import GrammarTracker
 from poc0.tokenizer import id_to_token
 from poc0.train import create_train_state
 
@@ -44,23 +45,71 @@ def sample_tokens(
     logits_fn: LogitsFn,
     temperature: float,
     rng: jax.Array,
+    constrained: bool = False,
 ) -> SampleResult:
     if temperature <= 0.0:
         raise ValueError(f"temperature must be > 0, got {temperature}")
 
+    if not constrained:
+        prefix_token_ids = [BOS_ID]
+        emitted_tokens: list[str] = []
+        depth = 0
+
+        for _ in range(MAX_SEQ_LEN - 1):
+            logits = _masked_logits(
+                logits_fn(jnp.asarray(prefix_token_ids, dtype=jnp.int32))
+            )
+            rng, sample_rng = jax.random.split(rng)
+            next_token_id = int(
+                jax.random.categorical(sample_rng, logits / temperature).item()
+            )
+            next_token = id_to_token(next_token_id)
+            prefix_token_ids.append(next_token_id)
+            emitted_tokens.append(next_token)
+
+            if next_token == "OPEN":
+                depth += 1
+            elif next_token == "CLOSE":
+                depth -= 1
+                if depth < 0:
+                    return SampleResult(
+                        tokens=emitted_tokens,
+                        success=False,
+                        invalid_reason=InvalidSampleReason.NEGATIVE_DEPTH.value,
+                        depth=depth,
+                    )
+            elif next_token == "STOP" and depth == 0:
+                return SampleResult(
+                    tokens=emitted_tokens,
+                    success=True,
+                    invalid_reason=None,
+                    depth=depth,
+                )
+
+        return SampleResult(
+            tokens=emitted_tokens,
+            success=False,
+            invalid_reason=InvalidSampleReason.LENGTH_CAP.value,
+            depth=depth,
+        )
+
     prefix_token_ids = [BOS_ID]
     emitted_tokens: list[str] = []
     depth = 0
+    tracker = GrammarTracker.initial()
 
     for _ in range(MAX_SEQ_LEN - 1):
         logits = _masked_logits(
             logits_fn(jnp.asarray(prefix_token_ids, dtype=jnp.int32))
         )
+        grammar_mask = jnp.asarray(tracker.legal_mask())
+        logits = jnp.where(grammar_mask, logits, -jnp.inf)
         rng, sample_rng = jax.random.split(rng)
         next_token_id = int(
             jax.random.categorical(sample_rng, logits / temperature).item()
         )
         next_token = id_to_token(next_token_id)
+        tracker = tracker.advance_token_id(next_token_id)
         prefix_token_ids.append(next_token_id)
         emitted_tokens.append(next_token)
 
