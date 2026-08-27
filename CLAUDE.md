@@ -8,16 +8,18 @@ for downstream CFG generation via Graph Transformers.
 
 ```
 cfg_reducer/
-  types.py       — Pure data: NodeType, Op, Motif (frozen dataclasses)
+  types.py       — Pure data: NodeType, Op, Motif, MetaGraph
   engine.py      — GraphEngine: node/edge mutation with Op-based undo/redo
   algorithm.py   — ReductionAlgorithm: two-phase (terminal removal + SCC cycle breaking)
                    Scope enter/leave, tarjan_scc()
   motif.py       — Motif extraction from Op history (reverse replay)
                    Hierarchical: Loop Motifs are containers with children
+  metagraph.py   — Hierarchical Motif trees to dependency DAGs
   store.py       — JSON serialization/deserialization of Op history
   __init__.py    — Public API re-exports
 main.py          — Interactive matplotlib visualizer with build_cfg()
 docs/            — Discussion logs and design notes
+tests/           — Pipeline-level MetaGraph regression tests
 ```
 
 ## Key Concepts
@@ -36,6 +38,11 @@ docs/            — Discussion logs and design notes
 - Data types are frozen dataclasses in types.py — keep them serialization-friendly.
 - No runtime dependencies beyond matplotlib and networkx.
 - Type checker: `ty` (in dev dependencies).
+
+## Handoff
+
+Read `docs/handoff.md` for the current branch state, required reading order,
+MetaGraph invariants, verification commands, and open design decisions.
 
 ## Companion Project
 
