@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "sample_id": "fixture-nested-loop-001",
+  "provenance": {
+    "source": "fixture",
+    "description": "Hand-authored from the nested-loop example; values match the live pipeline output (reduce -> extract -> build) as of 2026-08-28.",
+    "cfg_edges": [
+      ["A", "B"],
+      ["B", "C"],
+      ["C", "D"],
+      ["D", "C"],
+      ["D", "B"],
+      ["B", "E"]
+    ]
+  },
+  "metagraph": {
+    "motifs": [
+      {"kind": "entry", "node": "A", "preds": [], "succs": [], "meta": {}, "step": 0},
+      {"kind": "loop", "node": null, "preds": ["A"], "succs": ["E"], "meta": {"header": "B", "scc": ["B", "C", "D"], "back_edges": [["D", "B"]]}, "step": 5},
+      {"kind": "linear", "node": "E", "preds": ["B"], "succs": [], "meta": {}, "step": 6}
+    ],
+    "edges": [[0, 5], [5, 6]],
+    "subgraphs": [
+      {
+        "loop_step": 5,
+        "graph": {
+          "motifs": [
+            {"kind": "linear", "node": "B", "preds": ["A"], "succs": [], "meta": {}, "step": 1},
+            {"kind": "loop", "node": null, "preds": ["B"], "succs": [], "meta": {"header": "C", "scc": ["C", "D"], "back_edges": [["D", "C"]]}, "step": 4}
+          ],
+          "edges": [[1, 4]],
+          "subgraphs": [
+            {
+              "loop_step": 4,
+              "graph": {
+                "motifs": [
+                  {"kind": "linear", "node": "C", "preds": ["B"], "succs": [], "meta": {}, "step": 2},
+                  {"kind": "linear", "node": "D", "preds": ["C"], "succs": [], "meta": {}, "step": 3}
+                ],
+                "edges": [[2, 3]],
+                "subgraphs": []
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
