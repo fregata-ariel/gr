@@ -15,11 +15,12 @@ cfg_reducer/
   motif.py       — Motif extraction from Op history (reverse replay)
                    Hierarchical: Loop Motifs are containers with children
   metagraph.py   — Hierarchical Motif trees to dependency DAGs
-  store.py       — JSON serialization/deserialization of Op history
+  store.py       — JSON serialization/deserialization of Op history and
+                   MetaGraph samples (docs/design/metagraph_schema.md)
   __init__.py    — Public API re-exports
 main.py          — Interactive matplotlib visualizer with build_cfg()
 docs/            — Discussion logs and design notes
-tests/           — Pipeline-level MetaGraph regression tests
+tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
 
 ## Key Concepts
