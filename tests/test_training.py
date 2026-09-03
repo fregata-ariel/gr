@@ -3,13 +3,16 @@ eval metrics, and self-containment guards for the Colab-only trainer."""
 
 import ast
 import json
+import random
 from pathlib import Path
 
-from cfg_reducer import dataset, model_input, store
-from training import data_utils, eval_samples, prepare_tokens
+from cfg_reducer import GraphEngine, dataset, model_input, store
+from cfg_reducer.generate import generate_cfg
+from training import data_utils, eval_samples, grammar_mask, prepare_tokens
 
 CONFIG = {"num_nodes": 8, "edge_prob": 0.3}
 TRAIN_AR = Path(__file__).parent.parent / "training" / "train_ar.py"
+GRAMMAR_MASK = Path(__file__).parent.parent / "training" / "grammar_mask.py"
 
 
 def _prepare(tmp_path):
@@ -62,11 +65,41 @@ def test_eval_metrics_on_valid_and_corrupted_streams(tmp_path):
     assert replay["well_formed"] == 1
     assert replay["novel_sketches"] == 0
 
-    # Dropping EOS breaks the grammar
+    assert report["violations"] == {}
+
+    # Dropping EOS breaks the grammar — and is classified as a clean
+    # truncation, not structural damage
     corrupted = [s[:-1] for s in val]
     broken = eval_samples.evaluate(corrupted, vocab, train)
     assert broken["well_formed"] == 0
     assert broken["well_formed_rate"] == 0.0
+    assert broken["violations"] == {
+        "no_eos:would_close_cleanly": len(corrupted),
+    }
+
+
+def test_violation_classification():
+    vocab = model_input.build_vocab(2)
+
+    def ids(names):
+        return [vocab[n] for n in names]
+
+    cases = {
+        "ref_out_of_range":
+            ids(["BOS", "KIND_ENTRY", "KIND_LINEAR", "REF_2", "EOS"]),
+        "loop_missing_start":
+            ids(["BOS", "KIND_LOOP", "EOS"]),
+        "unclosed_loop":
+            ids(["BOS", "KIND_LOOP", "LOOP_START", "EOS"]),
+        "no_eos:would_close_cleanly":
+            ids(["BOS", "KIND_ENTRY", "KIND_LINEAR", "REF_1"]),
+        "no_eos:unclosed_loop":
+            ids(["BOS", "KIND_LOOP", "LOOP_START", "KIND_ENTRY"]),
+        "ok":
+            ids(["BOS", "KIND_ENTRY", "KIND_LINEAR", "REF_1", "EOS"]),
+    }
+    for expected, stream in cases.items():
+        assert eval_samples.classify_stream(stream, vocab) == expected
 
 
 def test_jsonl_roundtrip(tmp_path):
@@ -76,11 +109,9 @@ def test_jsonl_roundtrip(tmp_path):
     assert data_utils.read_jsonl(path) == rows
 
 
-def test_train_ar_is_valid_and_self_contained():
-    source = TRAIN_AR.read_text(encoding="utf-8")
-    tree = ast.parse(source)     # syntax guard (torch not installed locally)
-
-    imported = {
+def _imports_of(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))   # syntax guard
+    return {
         node.names[0].name.split(".")[0]
         for node in ast.walk(tree)
         if isinstance(node, ast.Import)
@@ -89,6 +120,58 @@ def test_train_ar_is_valid_and_self_contained():
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom)
     }
-    # Single-file Colab upload: only stdlib + torch allowed
-    assert "cfg_reducer" not in imported
-    assert "training" not in imported
+
+
+def test_colab_files_do_not_depend_on_cfg_reducer():
+    # train_ar.py + grammar_mask.py are the only files uploaded to the VM
+    assert "cfg_reducer" not in _imports_of(TRAIN_AR)
+    assert "cfg_reducer" not in _imports_of(GRAMMAR_MASK)
+    # grammar_mask must stay torch-free (local tests import it)
+    assert "torch" not in _imports_of(GRAMMAR_MASK)
+
+
+# ── grammar-constrained decoding ─────────────
+
+def _mg_from_seed(seed: int):
+    engine = GraphEngine()
+    generate_cfg(engine, num_nodes=10, edge_prob=0.3, seed=seed)
+    return dataset.reduce_to_metagraph(engine)
+
+
+def test_grammar_state_accepts_every_real_stream():
+    for seed in range(4):
+        mg = _mg_from_seed(seed)
+        vocab = model_input.build_vocab(
+            max(1, model_input.max_offset_needed(mg))
+        )
+        tokens = model_input.tokenize(mg, vocab)
+
+        state = grammar_mask.GrammarState(vocab)
+        for token in tokens[1:]:
+            assert token in state.allowed_ids()
+            state.push(token)
+        assert state.done
+
+
+def _random_walk(vocab, rng, max_len):
+    state = grammar_mask.GrammarState(vocab)
+    ids = [vocab["BOS"]]
+    while not state.done:
+        # +2 guard band, same as train_ar.sample_stream
+        if (max_len - len(ids)) <= state.min_close_cost() + 2:
+            next_id = state.forced_close_id()
+        else:
+            next_id = rng.choice(state.allowed_ids())
+        ids.append(next_id)
+        state.push(next_id)
+    return ids
+
+
+def test_random_walks_over_allowed_ids_are_well_formed():
+    vocab = model_input.build_vocab(6)
+    rng = random.Random(0)
+    for max_len in (12, 40):     # short budget exercises forced closing
+        for _ in range(40):
+            ids = _random_walk(vocab, rng, max_len)
+            assert len(ids) <= max_len
+            model_input.detokenize(ids, vocab)   # must not raise

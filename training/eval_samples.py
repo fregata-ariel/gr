@@ -19,6 +19,51 @@ from pathlib import Path
 from cfg_reducer import model_input
 from training.data_utils import read_jsonl
 
+# detokenize error message fragment -> violation category
+_VIOLATION_CATEGORIES = [
+    ("stream must be BOS", "no_eos"),
+    ("points before the start of its level", "ref_out_of_range"),
+    ("strictly increasing", "ref_not_increasing"),
+    ("no preceding motif", "ref_misplaced"),
+    ("missing its LOOP_START", "loop_missing_start"),
+    ("must follow a loop motif", "loop_start_misplaced"),
+    ("unbalanced LOOP_END", "unbalanced_loop_end"),
+    ("unbalanced LOOP_START", "unclosed_loop"),
+    ("unexpected", "special_token_inside"),
+    ("unknown token id", "unknown_token"),
+]
+
+
+def _classify(message: str) -> str:
+    for fragment, category in _VIOLATION_CATEGORIES:
+        if fragment in message:
+            return category
+    return "other"
+
+
+def classify_stream(stream: list[int], vocab: dict[str, int]) -> str:
+    """
+    "ok", or the violation category of a malformed stream.
+
+    A stream that never emitted EOS ("no_eos") is re-parsed with EOS
+    appended to split the sampling-budget case from real structural
+    damage: "no_eos:would_close_cleanly" means the prefix was valid and
+    the model simply ran out of budget before choosing EOS.
+    """
+    try:
+        model_input.detokenize(stream, vocab)
+        return "ok"
+    except ValueError as exc:
+        category = _classify(str(exc))
+
+    if category == "no_eos":
+        try:
+            model_input.detokenize(stream + [vocab["EOS"]], vocab)
+            return "no_eos:would_close_cleanly"
+        except ValueError as exc:
+            return f"no_eos:{_classify(str(exc))}"
+    return category
+
 
 def evaluate(
     streams: list[list[int]],
@@ -30,11 +75,13 @@ def evaluate(
     }
 
     well_formed: list = []
+    violations: dict[str, int] = {}
     for stream in streams:
-        try:
+        category = classify_stream(stream, vocab)
+        if category == "ok":
             well_formed.append(model_input.detokenize(stream, vocab))
-        except ValueError:
-            pass
+        else:
+            violations[category] = violations.get(category, 0) + 1
 
     unique = set(well_formed)
     novel = unique - train_sketches
@@ -52,6 +99,9 @@ def evaluate(
         "novelty_rate": len(novel) / len(unique) if unique else 0.0,
         "avg_stream_len": (
             sum(len(s) for s in streams) / total if total else 0.0
+        ),
+        "violations": dict(
+            sorted(violations.items(), key=lambda kv: (-kv[1], kv[0]))
         ),
     }
 

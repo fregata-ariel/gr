@@ -23,6 +23,17 @@ from pathlib import Path
 import torch                  # ty: ignore[unresolved-import]
 from torch import nn          # ty: ignore[unresolved-import]
 
+# On the VM grammar_mask.py sits next to this file; locally it lives in
+# the training package. Only needed for --constrained sampling.
+try:
+    import grammar_mask as _gm
+except ImportError:
+    try:
+        from training import grammar_mask as _gm
+    except ImportError:
+        _gm = None   # ty: ignore[conflicting-declarations, invalid-assignment]
+grammar_mask = _gm
+
 
 # ── data ─────────────────────────────────────
 
@@ -114,23 +125,42 @@ def run_epoch(model, seqs, batch_size, pad_id, device,
 
 
 @torch.no_grad()
-def sample_stream(model, vocab, device, max_len, temperature, top_k):
+def sample_stream(model, vocab, device, max_len, temperature, top_k,
+                  state=None):
+    """state: optional grammar_mask.GrammarState for constrained decoding.
+    With a state, every pick is masked to the grammar and the tail of the
+    budget is spent on the shortest legal path to EOS, so the stream is
+    well-formed by construction."""
     model.eval()
     ids = [vocab["BOS"]]
     for _ in range(max_len - 1):
-        x = torch.tensor([ids], dtype=torch.long, device=device)
-        logits = model(x)[0, -1] / temperature
-        logits[vocab["PAD"]] = float("-inf")
-        logits[vocab["BOS"]] = float("-inf")
+        # +2 guard band: a free KIND_LOOP pick raises the close cost by 2,
+        # so forcing must start before the budget can be jumped over.
+        if state is not None and \
+                (max_len - len(ids)) <= state.min_close_cost() + 2:
+            next_id = state.forced_close_id()
+        else:
+            x = torch.tensor([ids], dtype=torch.long, device=device)
+            logits = model(x)[0, -1] / temperature
+            logits[vocab["PAD"]] = float("-inf")
+            logits[vocab["BOS"]] = float("-inf")
 
-        if top_k > 0:
-            keep = torch.topk(logits, min(top_k, logits.size(-1))).indices
-            filtered = torch.full_like(logits, float("-inf"))
-            filtered[keep] = logits[keep]
-            logits = filtered
+            if state is not None:
+                mask = torch.full_like(logits, float("-inf"))
+                mask[state.allowed_ids()] = 0.0
+                logits = logits + mask
 
-        next_id = int(torch.multinomial(torch.softmax(logits, -1), 1))
+            if top_k > 0:
+                keep = torch.topk(logits, min(top_k, logits.size(-1))).indices
+                filtered = torch.full_like(logits, float("-inf"))
+                filtered[keep] = logits[keep]
+                logits = filtered
+
+            next_id = int(torch.multinomial(torch.softmax(logits, -1), 1))
+
         ids.append(next_id)
+        if state is not None:
+            state.push(next_id)
         if next_id == vocab["EOS"]:
             break
     return ids
@@ -160,6 +190,9 @@ def main(argv=None):
                         help="0 disables top-k filtering")
     parser.add_argument("--gen-max-len", type=int, default=0,
                         help="0 means 2x the training max length")
+    parser.add_argument("--constrained", action="store_true",
+                        help="grammar-constrained sampling (needs "
+                             "grammar_mask.py next to this file)")
     # parse_known_args: `colab exec` runs this file inside a notebook
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
@@ -216,9 +249,15 @@ def main(argv=None):
     model.load_state_dict(
         torch.load(out / "model.pt", map_location=device)
     )
+    if args.constrained and grammar_mask is None:
+        raise SystemExit("--constrained requires grammar_mask.py")
     samples = [
-        sample_stream(model, vocab, device, gen_max_len,
-                      args.temperature, args.top_k)
+        sample_stream(
+            model, vocab, device, gen_max_len,
+            args.temperature, args.top_k,
+            state=(grammar_mask.GrammarState(vocab)
+                   if args.constrained else None),
+        )
         for _ in range(args.num_samples)
     ]
     (out / "samples.json").write_text(
