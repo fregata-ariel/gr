@@ -259,13 +259,20 @@ def token_logprobs(model, batch, vc: Vocab):
 
     type_of = torch.tensor(vc.type_of, device=tokens.device)
     type_targets = type_of[targets]
-    type_logp = torch.log_softmax(model.type_head(hidden), -1)
-    logp = type_logp.gather(-1, type_targets.unsqueeze(-1)).squeeze(-1)
-
     plpos = batch["plpos"][:, :-1]
     cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
                           plpos, vc.max_k,
                           batch["klast"][:, :-1] if model.pointer_legal else None)
+    type_logits = model.type_head(hidden)
+    if model.pointer_legal:
+        # REF is impossible where no legal candidate exists: mask the
+        # class instead of asking the model to learn to avoid it.
+        no_cand = ~cand.any(-1)
+        type_logits = type_logits.masked_fill(
+            no_cand.unsqueeze(-1) & (torch.arange(type_logits.size(-1), device=tokens.device) == vc.ref_type),
+            NEG)
+    type_logp = torch.log_softmax(type_logits, -1)
+    logp = type_logp.gather(-1, type_targets.unsqueeze(-1)).squeeze(-1)
     ref_target = batch["ref_target"][:, :-1]
     is_ref = ref_target.ge(0) & valid
     if is_ref.any():
@@ -408,6 +415,8 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
     plpos = torch.tensor([aux["plpos"]], device=device)
     klast = torch.tensor([aux["klast"]], device=device) if model.pointer_legal else None
     cand = candidate_mask(is_kind, level_id, plpos, vc.max_k, klast)[0, t]
+    if model.pointer_legal and not cand.any():
+        type_logits[vc.ref_type] = NEG        # impossible class (see token_logprobs)
     if allowed is not None:
         # grammar: monotone refs & only offsets the grammar allows
         allowed_ks = {k for k, i in vc.ref_ids.items() if i in allowed}
