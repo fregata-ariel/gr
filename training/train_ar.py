@@ -37,12 +37,16 @@ grammar_mask = _gm
 
 # ── data ─────────────────────────────────────
 
-def load_streams(path: str | Path) -> list[list[int]]:
+def load_rows(path: str | Path) -> list[dict]:
     return [
-        json.loads(line)["tokens"]
+        json.loads(line)
         for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def load_streams(path: str | Path) -> list[list[int]]:
+    return [row["tokens"] for row in load_rows(path)]
 
 
 def iter_batches(seqs, batch_size, pad_id, device, rng=None):
@@ -125,6 +129,32 @@ def run_epoch(model, seqs, batch_size, pad_id, device,
 
 
 @torch.no_grad()
+def score_rows(model, rows, device):
+    """Teacher-forced per-sample scores for the structure analysis:
+    total/mean NLL, token accuracy, and the per-token NLL trace."""
+    model.eval()
+    scored = []
+    for row in rows:
+        seq = torch.tensor([row["tokens"]], dtype=torch.long, device=device)
+        inputs, targets = seq[:, :-1], seq[:, 1:]
+        logits = model(inputs)
+        log_probs = torch.log_softmax(logits, -1)
+        token_lp = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)[0]
+        n_tokens = targets.size(1)
+        nll = float(-token_lp.sum())
+        scored.append({
+            "sample_id": row.get("sample_id"),
+            "seed": row.get("seed"),
+            "n_tokens": n_tokens,
+            "nll": nll,
+            "nll_per_token": nll / n_tokens,
+            "acc": float(logits.argmax(-1).eq(targets).float().mean()),
+            "token_nll": [round(-float(x), 4) for x in token_lp],
+        })
+    return scored
+
+
+@torch.no_grad()
 def sample_stream(model, vocab, device, max_len, temperature, top_k,
                   state=None):
     """state: optional grammar_mask.GrammarState for constrained decoding.
@@ -176,6 +206,9 @@ def main(argv=None):
     parser.add_argument("--meta", default="/content/meta.json")
     parser.add_argument("--out", default="/content/run1")
     parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--patience", type=int, default=0,
+                        help="early stop after N epochs without val "
+                             "improvement (0 = off)")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--d-model", type=int, default=128)
@@ -204,7 +237,8 @@ def main(argv=None):
     vocab = json.loads(Path(args.vocab).read_text(encoding="utf-8"))
     meta = json.loads(Path(args.meta).read_text(encoding="utf-8"))
     train_seqs = load_streams(args.train)
-    val_seqs = load_streams(args.val)
+    val_rows = load_rows(args.val)
+    val_seqs = [row["tokens"] for row in val_rows]
 
     gen_max_len = args.gen_max_len or 2 * meta["max_len"]
     model = ARBaseline(
@@ -221,6 +255,8 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     history = []
     best_val = float("inf")
+    best_epoch = 0
+    since_best = 0
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = run_epoch(
@@ -240,7 +276,14 @@ def main(argv=None):
 
         if val_loss < best_val:
             best_val = val_loss
+            best_epoch = epoch
+            since_best = 0
             torch.save(model.state_dict(), out / "model.pt")
+        else:
+            since_best += 1
+            if args.patience and since_best >= args.patience:
+                print(f"early stop at epoch {epoch} (best epoch {best_epoch})")
+                break
 
     (out / "history.json").write_text(
         json.dumps(history, indent=2), encoding="utf-8"
@@ -248,6 +291,11 @@ def main(argv=None):
 
     model.load_state_dict(
         torch.load(out / "model.pt", map_location=device)
+    )
+
+    val_scores = score_rows(model, val_rows, device)
+    (out / "val_scores.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in val_scores), encoding="utf-8"
     )
     if args.constrained and grammar_mask is None:
         raise SystemExit("--constrained requires grammar_mask.py")
@@ -263,6 +311,8 @@ def main(argv=None):
     (out / "samples.json").write_text(
         json.dumps({
             "best_val_loss": best_val,
+            "best_epoch": best_epoch,
+            "epochs_run": len(history),
             "config": vars(args),
             "samples": samples,
         }, indent=2),
