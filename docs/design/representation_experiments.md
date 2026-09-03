@@ -73,3 +73,37 @@ lpos 埋め込みを学習型から固定正弦波(滑らか、未見のカウ�
 置き換える `--struct-pos-mode sinusoidal`。深さは値域が小さいので学習型のまま。
 判定基準: WF の改善を保ちつつ val NLL・EOS NLL が baseline 水準へ戻ること。
 戻らなければ案 2(pointer 型参照ヘッド)へ。
+
+## 案 2(設計、実装は案 1′ の結果を見て着手): pointer 型参照ヘッド
+
+### 動機
+
+案 1 は「距離 k を数える」負担を明示カウンタで軽減したが、参照はなお
+`REF_k` という**距離トークンの分類**であり、(a) 語彙に REF 窓の上限がある、
+(b) 距離が大きいほどクラスが希薄で学習しにくい、(c) 絶対カウント値への依存が
+暗記を招く、という構造的制約が残る。pointer 型は「どの Motif を参照するか」を
+同一階層の過去 Motif への注意で直接選ぶため、距離は副産物になり (a)〜(c) が
+同時に消える。
+
+### 仕様(案)
+
+- **トークン列は不変**(canonical schema・`detokenize`・評価軸はそのまま)。
+  変わるのは REF トークンの**予測方法**のみ。
+- 各位置で 2 段の予測: (1) 通常ヘッドで「次は KIND / LOOP_* / EOS / REF のどれか」
+  (REF はまとめて 1 クラス `REF`)、(2) 次が REF なら pointer ヘッドが
+  「同一階層の過去 KIND トークン位置」上の分布を出す(query = 現在の隠れ状態、
+  key = 各候補 KIND トークンの隠れ状態)。距離 k は選ばれた候補の階層内位置から
+  決定的に復元し、`REF_k` トークンとして系列に戻す。
+- 候補集合(同一階層・現在 Motif より前・既参照より遠い)は `GrammarState` /
+  `structural_positions` から機械的に得られる → 学習時は mask 付き softmax、
+  生成時は制約デコードと自然に一体化する(不正な候補は最初から存在しない)。
+- 損失 = 種別ヘッドの CE + (REF 位置のみ)pointer の CE。teacher-forced の
+  per-token NLL は「種別 NLL + pointer NLL」として同じ trace 形式で出力し、
+  **REF NLL-by-k 曲線をそのまま比較可能**にする。
+
+### 判定基準
+
+- 主軸: REF NLL-by-k 曲線が k に対して平坦化(k=1 と k=8 の差が縮む)、
+  `mean_offset` の ρ が低下、非制約 WF が案 1 水準以上。
+- canary: `max_in_degree`(複数参照を持つ merge で候補が競合しやすい)を
+  最重点で監視。EOS / LOOP NLL は baseline 水準に戻ること。
