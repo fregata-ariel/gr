@@ -120,18 +120,27 @@ def iter_batches(seqs, auxes, batch_size, pad_id, device, rng=None):
         yield batch
 
 
-def candidate_mask(is_kind, level_id, plpos, max_k):
+def candidate_mask(is_kind, level_id, plpos, max_k, klast=None):
     """(B, L, L) pointer universe: earlier KIND tokens of the same level,
-    1..max_k motifs back. Grammar rules (monotone refs) are NOT applied
-    here — the model learns them; --constrained adds them at sampling."""
+    1..max_k motifs back. With klast (案 2', --pointer-legal) the
+    universe is the grammar-legal set: farther than the last emitted
+    offset, so monotone refs hold by construction."""
     length = plpos.size(1)
     t_idx = torch.arange(length, device=plpos.device).view(1, length, 1)
     j_idx = torch.arange(length, device=plpos.device).view(1, 1, length)
     dist = plpos.unsqueeze(2) - plpos.unsqueeze(1)          # lpos[t]-lpos[j]
-    return ((j_idx < t_idx)
+    cand = ((j_idx < t_idx)
             & (level_id.unsqueeze(2) == level_id.unsqueeze(1))
             & is_kind.unsqueeze(1).bool()
             & (dist >= 1) & (dist <= max_k))
+    if klast is not None:
+        cand = cand & (dist > klast.unsqueeze(2))
+    return cand
+
+
+def pointer_dist(plpos):
+    """(B, L, L) lpos[t] - lpos[j], clamped to >= 0 for the bias table."""
+    return (plpos.unsqueeze(2) - plpos.unsqueeze(1)).clamp(min=0)
 
 
 # ── model ────────────────────────────────────
@@ -153,7 +162,8 @@ class ARBaseline(nn.Module):
                  d_model=128, nhead=4, num_layers=4,
                  dim_feedforward=512, dropout=0.1,
                  use_struct=False, max_depth=16, struct_mode="learned",
-                 use_pointer=False, n_types=0):
+                 use_pointer=False, n_types=0, pointer_legal=False,
+                 pointer_dist_bias=False, max_k=0):
         super().__init__()
         self.pad_id = pad_id
         self.max_len = max_len
@@ -161,6 +171,8 @@ class ARBaseline(nn.Module):
         self.use_struct = use_struct
         self.max_depth = max_depth
         self.use_pointer = use_pointer
+        self.pointer_legal = pointer_legal
+        self.pointer_dist_bias = pointer_dist_bias
         self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_emb = nn.Embedding(max_len, d_model)
         if use_struct:
@@ -180,6 +192,9 @@ class ARBaseline(nn.Module):
             self.type_head = nn.Linear(d_model, n_types)
             self.ptr_q = nn.Linear(d_model, d_model)
             self.ptr_k = nn.Linear(d_model, d_model)
+            if pointer_dist_bias:
+                self.dist_bias = nn.Embedding(max_k + 1, 1)
+                nn.init.zeros_(self.dist_bias.weight)
         else:
             self.head = nn.Linear(d_model, vocab_size)
 
@@ -201,10 +216,16 @@ class ARBaseline(nn.Module):
     def forward(self, x, depth=None, lpos=None):
         return self.head(self.encode(x, depth, lpos))
 
-    def pointer_scores(self, hidden, cand):
-        """(B, L, L) log-domain scores, -inf outside the candidate set."""
+    def pointer_scores(self, hidden, cand, dist=None):
+        """(B, L, L) log-domain scores, -inf outside the candidate set.
+        dist (lpos[t]-lpos[j]) adds the learned distance bias (案 2')."""
         q, k = self.ptr_q(hidden), self.ptr_k(hidden)
         scores = q @ k.transpose(1, 2) / math.sqrt(self.d_model)
+        if self.pointer_dist_bias:
+            if dist is None:
+                raise ValueError("dist bias needs the distance matrix")
+            scores = scores + self.dist_bias(
+                dist.clamp(max=self.dist_bias.num_embeddings - 1)).squeeze(-1)
         return scores.masked_fill(~cand, NEG)
 
 
@@ -230,12 +251,14 @@ def token_logprobs(model, batch, vc: Vocab):
     type_logp = torch.log_softmax(model.type_head(hidden), -1)
     logp = type_logp.gather(-1, type_targets.unsqueeze(-1)).squeeze(-1)
 
+    plpos = batch["plpos"][:, :-1]
     cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
-                          batch["plpos"][:, :-1], vc.max_k)
+                          plpos, vc.max_k,
+                          batch["klast"][:, :-1] if model.pointer_legal else None)
     ref_target = batch["ref_target"][:, :-1]
     is_ref = ref_target.ge(0) & valid
     if is_ref.any():
-        scores = model.pointer_scores(hidden, cand)
+        scores = model.pointer_scores(hidden, cand, pointer_dist(plpos))
         ptr_logp = torch.log_softmax(scores, -1)
         picked = ptr_logp.gather(-1, ref_target.clamp(min=0).unsqueeze(-1)).squeeze(-1)
         logp = logp + torch.where(is_ref, picked, torch.zeros_like(picked))
@@ -372,7 +395,8 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
     is_kind = torch.tensor([aux["is_kind"]], device=device)
     level_id = torch.tensor([aux["level_id"]], device=device)
     plpos = torch.tensor([aux["plpos"]], device=device)
-    cand = candidate_mask(is_kind, level_id, plpos, vc.max_k)[0, t]
+    klast = torch.tensor([aux["klast"]], device=device) if model.pointer_legal else None
+    cand = candidate_mask(is_kind, level_id, plpos, vc.max_k, klast)[0, t]
     if allowed is not None:
         # grammar: monotone refs & only offsets the grammar allows
         allowed_ks = {k for k, i in vc.ref_ids.items() if i in allowed}
@@ -392,7 +416,9 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
     if not cand.any():
         # unconstrained diagnostic: an impossible reference stays a violation
         return vc.ref_ids[1]
-    scores = model.pointer_scores(hidden, cand.view(1, 1, -1).expand(1, hidden.size(1), -1))[0, t]
+    scores = model.pointer_scores(
+        hidden, cand.view(1, 1, -1).expand(1, hidden.size(1), -1),
+        pointer_dist(plpos))[0, t]
     scores = scores / temperature
     j = int(torch.multinomial(torch.softmax(_top_k(scores, top_k), -1), 1))
     k = aux["plpos"][t] - aux["plpos"][j]
@@ -434,6 +460,11 @@ def main(argv=None):
                         choices=["learned", "sinusoidal"])
     parser.add_argument("--pointer", action="store_true",
                         help="案 2: pointer-style reference head")
+    parser.add_argument("--pointer-legal", action="store_true",
+                        help="案 2': pointer universe = grammar-legal "
+                             "candidates (farther than the last offset)")
+    parser.add_argument("--pointer-dist-bias", action="store_true",
+                        help="案 2': learned per-distance bias on scores")
     # parse_known_args: `colab exec` runs this file inside a notebook
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
@@ -460,7 +491,8 @@ def main(argv=None):
         num_layers=args.num_layers, dim_feedforward=args.dim_feedforward,
         dropout=args.dropout, use_struct=args.struct_pos,
         struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
-        n_types=len(vc.type_names),
+        n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
+        pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
