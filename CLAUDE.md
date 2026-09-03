@@ -17,8 +17,10 @@ cfg_reducer/
   metagraph.py   — Hierarchical Motif trees to dependency DAGs
   store.py       — JSON serialization/deserialization of Op history and
                    MetaGraph samples (docs/design/metagraph_schema.md)
+  generate.py    — Pure synthetic CFG generator (no matplotlib)
+  dataset.py     — Batch dataset builder + CLI: splits, iso-dedup, manifest
   __init__.py    — Public API re-exports
-main.py          — Interactive matplotlib visualizer with build_cfg()
+main.py          — Interactive matplotlib visualizer (imports generate_cfg)
 docs/            — Discussion logs and design notes
 tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
