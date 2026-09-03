@@ -178,9 +178,12 @@ class ARBaseline(nn.Module):
         self.pos_emb = nn.Embedding(max_len, d_model)
         if use_struct:
             self.depth_emb = nn.Embedding(max_depth, d_model)
+            self.struct_mode = struct_mode
             if struct_mode == "sinusoidal":
                 self.lpos_emb = nn.Embedding.from_pretrained(
                     sinusoidal_table(max_len, d_model), freeze=True)
+            elif struct_mode == "depth_only":
+                self.lpos_emb = None          # 案 3': depth only, no level count
             else:
                 self.lpos_emb = nn.Embedding(max_len, d_model)
         layer = nn.TransformerEncoderLayer(
@@ -211,9 +214,9 @@ class ARBaseline(nn.Module):
         if self.use_struct:
             if depth is None or lpos is None:
                 raise ValueError("struct-pos model needs depth/lpos inputs")
-            hidden = hidden \
-                + self.depth_emb(depth.clamp(max=self.max_depth - 1)) \
-                + self.lpos_emb(lpos.clamp(max=self.max_len - 1))
+            hidden = hidden + self.depth_emb(depth.clamp(max=self.max_depth - 1))
+            if self.lpos_emb is not None:
+                hidden = hidden + self.lpos_emb(lpos.clamp(max=self.max_len - 1))
         causal = nn.Transformer.generate_square_subsequent_mask(
             length, device=x.device)
         return self.encoder(hidden, mask=causal,
@@ -477,7 +480,7 @@ def main(argv=None):
     parser.add_argument("--struct-pos", action="store_true",
                         help="案 1: explicit level-position / depth embeddings")
     parser.add_argument("--struct-pos-mode", default="learned",
-                        choices=["learned", "sinusoidal"])
+                        choices=["learned", "sinusoidal", "depth_only"])
     parser.add_argument("--pointer", action="store_true",
                         help="案 2: pointer-style reference head")
     parser.add_argument("--pointer-legal", action="store_true",
