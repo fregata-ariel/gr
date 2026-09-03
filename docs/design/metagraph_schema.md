@@ -1,7 +1,8 @@
 # MetaGraph canonical JSON schema (draft v1)
 
 作成日: 2026-08-28
-状態: **レビュー待ち**(承認後に encode/decode と round-trip test を実装する)
+状態: **承認済み**(2026-09-03 レビュー確定。実装は `cfg_reducer/store.py` の
+`encode_sample` / `decode_sample` / `save_sample` / `load_sample`)
 
 `docs/handoff_questions.md` の A2/A3/A5 で確定した方針を、実装可能な schema に
 落とした設計文書。サンプル fixture は
@@ -27,15 +28,33 @@
 
 | フィールド | 型 | 内容 |
 |---|---|---|
-| `schema_version` | int | この文書の版。互換性が壊れる変更で増やす |
-| `sample_id` | string | データセット内で一意なサンプル ID |
+| `schema_version` | int | この文書の版。互換性が壊れる変更で増やす。envelope のみに置く |
+| `sample_id` | string | データセット内で一意なサンプル ID(下記の導出規則) |
 | `provenance` | object | 生成元の追跡情報。`source` は必須(下記) |
 | `metagraph` | object | トップレベルの MetaGraph(下記) |
+
+### sample_id の導出
+
+役割を分離する: `sample_id` は**同一性**(参照・重複排除のキー)、`provenance` は
+**再現性**(どう再生成するか)を担い、消費側は `sample_id` を不透明な UUID として
+扱う(パースしない)。
+
+- `synthetic` / `clang`: 正準化した provenance(キー再帰 sort の compact JSON)を
+  名前として、リポジトリ固定 namespace から導出した **UUIDv5** を必須とする。
+  導出は「provenance → sample_id」の一方向のみで、同じ provenance からは常に
+  同じ ID になる(決定性・冪等性・重複検出が成立)。
+- `fixture`: 手書きの一意な文字列でよい(UUIDv5 は要求しない)。
+
+decode 時に ID と provenance の整合は検証しない(整合検査はデータセット生成側の
+責務とする)。
 
 `provenance.source` の値と追加フィールド:
 
 - `"synthetic"` — `generator: {name, version, seed, config}`。
-  seed range の split 分離(A3-4)に使う。
+  seed range の split 分離(A3-4)に使う。`config` は「`(name, version, seed)` と
+  合わせれば CFG を一意に再生成できる最小の生成パラメータ一式」= 生成器関数の
+  入力引数そのもの。`version` は本リポジトリの git commit(またはパッケージ版)を
+  記録し、変換規則の変遷は git 履歴で追跡する。
 - `"clang"` — `repository`, `file`, `function`。
   provenance group をまたいだ split 分離(A3-4)に使う。
 - `"fixture"` — 手書きレビュー用。`description` と、再検証用の
@@ -98,11 +117,13 @@
 `parent_loop_step`(トップレベルは null)と `depth` を付与する(A3-2)。
 仕様の確定は自己回帰 baseline の architecture spike 時に行う(A3-3)。
 
-## レビュー観点(未確定点)
+## レビュー結果(2026-09-03 確定)
 
-1. `sample_id` の命名規則(generator 名 + seed の合成か、UUID か)。
-2. synthetic の `provenance.generator.config` に含める最小フィールド。
-3. 元 CFG の edge list を全 source で保存するか(`fixture` のみ必須とするか)。
-   保存すれば round-trip 検証が自己完結するが、サイズが増える。
-4. `schema_version` を envelope だけに置くか、再帰 `graph` にも置くか
-   (現案: envelope のみ)。
+1. `sample_id` — 消費側には不透明な UUID。synthetic / clang は正準化 provenance
+   からの UUIDv5 で導出(上記「sample_id の導出」)。fixture は任意の一意文字列可。
+2. `provenance.generator.config` — 生成器関数の入力引数一式(最小)。`version` は
+   git commit で固定(上記 provenance 節)。
+3. 元 CFG の edge list(`cfg_edges`)— `fixture` のみ必須。synthetic は seed
+   再生成、clang は provenance 参照で代替する。
+4. `schema_version` — envelope のみ。生成源が一意に定まれば変換規則は本リポジトリの
+   git で管理できるため、再帰 `graph` には埋めない。

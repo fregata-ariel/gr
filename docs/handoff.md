@@ -1,6 +1,6 @@
 # 開発引き継ぎガイド
 
-最終確認日: 2026-08-28
+最終確認日: 2026-09-03
 
 ## 目的
 
@@ -11,11 +11,10 @@
 
 | 項目 | 状態 |
 |---|---|
-| ブランチ | `feat/metagraph` |
-| HEAD | `438ef97 Add MetaGraph DAG construction from hierarchical Motifs` |
-| リモート | `origin/feat/metagraph` と同期済み |
+| ブランチ | `feat/metagraph`(draft PR [#3](https://github.com/fregata-ariel/gr/pull/3)) |
 | MetaGraph | 実装・公開 API・テストまで完了 |
-| テスト | `tests/test_metagraph.py` の 3 件が通過 |
+| シリアライズ | canonical JSON schema 確定(`docs/design/metagraph_schema.md`) |
+| テスト | `tests/` の engine / algorithm / motif / metagraph / store が通過 |
 | 型チェック | `uv run ty check` が通過 |
 | 既存の未コミット変更 | `pyproject.toml`, `uv.lock` |
 
@@ -59,8 +58,8 @@ GraphEngine
 - `ReductionAlgorithm` は reverse-Kahn と SCC cycle breaking で `Op` を生成する。
 - `motif.extract()` は `Op` を復元順に解釈し、Loop を子 Motif のコンテナにする。
 - `metagraph.build()` は各階層を独立した DAG に変換し、Loop 内部を再帰処理する。
-- `store.py` が保存できるのは現在 `Op` 履歴だけで、Motif/MetaGraph の永続化形式は
-  まだ定義されていない。
+- `store.py` は `Op` 履歴の JSON 保存に加え、MetaGraph サンプルの canonical JSON
+  encode/decode を提供する。形式は `docs/design/metagraph_schema.md` に従う。
 
 ## MetaGraph の不変条件
 
@@ -147,13 +146,12 @@ codex resume 019f0976-b94b-7220-beca-8bd83f65206d
 - 必要になった場合の MetaGraph エッジ種別追加
 - Colab 上の学習パイプライン確定
 
-次の具体的な実装候補は、`Op -> Motif -> MetaGraph` の複数グラフ向けデータ生成と、
-MetaGraph の安定したシリアライズ形式の定義である。その前に、以下を仕様として決める。
-
-1. `step` をサンプル内の永続 ID として保存するか、階層ごとに再採番するか。
-2. Loop の `subgraphs` を再帰 JSON にするか、親 ID 付きの flat table にするか。
-3. ノード ID、Motif kind、SCC membership、edge をモデル入力へどう符号化するか。
-4. 学習・検証データ間で CFG 生成 seed とグラフ構造をどう分離するか。
+シリアライズ仕様は `docs/handoff_questions.md` の Q&A で確定し、
+`docs/design/metagraph_schema.md` に集約された(step は永続 ID、再帰 JSON +
+flat 化は導出変換、provenance 由来 UUIDv5 の sample_id、seed/provenance 分離 +
+同型検査の split 方針)。次の実装候補は、seed ベースの synthetic CFG バッチ生成
+(pure な CFG generator の `main.py` からの分離を含む)と、`pyClangAST` 由来
+実 CFG の同一入力インターフェースへの接続である。
 
 ## 引き継ぎ時の注意
 
