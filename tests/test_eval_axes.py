@@ -57,3 +57,28 @@ def test_nll_by_offset_bin_is_monotone_in_offset_ranges():
     bins = eval_axes.nll_by_offset_bin(rows, bins=3)
     assert [b["n"] for b in bins] == [3, 3, 3]
     assert bins[0]["mean_offset_range"][1] <= bins[1]["mean_offset_range"][0]
+
+
+# ── sketch_stats (distribution fidelity) ─────
+
+def test_sketch_features_and_ks():
+    from cfg_reducer import GraphEngine, dataset
+    from training import sketch_stats
+    edges = [("A", "B"), ("B", "C"), ("C", "D"), ("D", "C"), ("D", "B"), ("B", "E")]
+    engine = GraphEngine()
+    for n in sorted({n for e in edges for n in e}):
+        engine.add_node(n)
+    for s, d in edges:
+        engine.add_edge(s, d)
+    mg = dataset.reduce_to_metagraph(engine)
+    vocab = model_input.build_vocab(2)
+    tokens = model_input.tokenize(mg, vocab)
+    f = sketch_stats.sketch_features(model_input.detokenize(tokens, vocab), len(tokens))
+    assert f["n_motifs"] == 7 and f["n_loops"] == 2 and f["max_depth"] == 2
+    assert f["max_width"] == 3 and f["mean_offset"] == 1.0
+
+    assert sketch_stats.ks_distance([1, 2, 3], [1, 2, 3]) == 0.0
+    assert sketch_stats.ks_distance([1, 2, 3], [4, 5, 6]) == 1.0
+    # malformed streams are dropped, not counted
+    rows = sketch_stats.features_of_streams([tokens, tokens[:-1]], vocab)
+    assert len(rows) == 1
