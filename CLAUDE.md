@@ -22,6 +22,8 @@ cfg_reducer/
   model_input.py — Flatten + tokenize for the AR baseline (topology-only view)
   __init__.py    — Public API re-exports
 main.py          — Interactive matplotlib visualizer (imports generate_cfg)
+training/        — AR baseline: local tokenize/eval (cfg_reducer, no torch),
+                   Colab trainer train_ar.py (torch only, single file)
 docs/            — Discussion logs and design notes
 tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
