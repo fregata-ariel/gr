@@ -450,7 +450,7 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
 
 # ── main ─────────────────────────────────────
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(description="Train the AR baseline.")
     parser.add_argument("--train", default="/content/train.jsonl")
     parser.add_argument("--val", default="/content/val.jsonl")
@@ -492,6 +492,26 @@ def main(argv=None):
                         choices=["scalar", "context"],
                         help="scalar (案 2') or context-conditional "
                              "distance logits (案 2'')")
+    return parser
+
+
+def build_model(vc: Vocab, meta: dict, args, gen_max_len: int):
+    """Model matching a flag set — shared by training and by sampling
+    from a saved checkpoint."""
+    return ARBaseline(
+        vocab_size=len(vc.vocab), max_len=max(meta["max_len"], gen_max_len),
+        pad_id=vc.pad, d_model=args.d_model, nhead=args.nhead,
+        num_layers=args.num_layers, dim_feedforward=args.dim_feedforward,
+        dropout=args.dropout, use_struct=args.struct_pos,
+        struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
+        n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
+        pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
+        dist_bias_mode=args.pointer_dist_bias_mode,
+    )
+
+
+def main(argv=None):
+    parser = build_parser()
     # parse_known_args: `colab exec` runs this file inside a notebook
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
@@ -512,16 +532,7 @@ def main(argv=None):
     val_aux = [sequence_aux(s, vc, args.struct_pos, args.pointer) for s in val_seqs]
 
     gen_max_len = args.gen_max_len or 2 * meta["max_len"]
-    model = ARBaseline(
-        vocab_size=len(vc.vocab), max_len=max(meta["max_len"], gen_max_len),
-        pad_id=vc.pad, d_model=args.d_model, nhead=args.nhead,
-        num_layers=args.num_layers, dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout, use_struct=args.struct_pos,
-        struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
-        n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
-        pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
-        dist_bias_mode=args.pointer_dist_bias_mode,
-    ).to(device)
+    model = build_model(vc, meta, args, gen_max_len).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     out = Path(args.out)
