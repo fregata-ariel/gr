@@ -19,6 +19,7 @@ cfg_reducer/
                    MetaGraph samples (docs/design/metagraph_schema.md)
   generate.py    — Pure synthetic CFG generator (no matplotlib)
   dataset.py     — Batch dataset builder + CLI: splits, iso-dedup, manifest
+  model_input.py — Flatten + tokenize for the AR baseline (topology-only view)
   __init__.py    — Public API re-exports
 main.py          — Interactive matplotlib visualizer (imports generate_cfg)
 docs/            — Discussion logs and design notes

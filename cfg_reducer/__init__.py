@@ -8,12 +8,12 @@ from .algorithm import ReductionAlgorithm, Scope, tarjan_scc
 # package level would re-execute it under -m. Use
 # `from cfg_reducer import dataset` (submodule import) instead.
 from .generate import generate_cfg
-from . import store, motif, metagraph, generate
+from . import store, motif, metagraph, generate, model_input
 
 __all__ = [
     "NodeType", "Op", "Motif", "MetaGraph", "BASIC",
     "GraphEngine", "Node",
     "ReductionAlgorithm", "Scope", "tarjan_scc",
     "generate_cfg",
-    "store", "motif", "metagraph", "generate",
+    "store", "motif", "metagraph", "generate", "model_input",
 ]
