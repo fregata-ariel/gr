@@ -124,6 +124,43 @@ def test_round_trip_on_generated_cfgs():
             model_input.sketch_of(mg)
 
 
+def test_larger_graphs_keep_forward_edges_and_round_trip():
+    """Regression for the scope-leak bug: 24-node CFGs produce multi-level
+    nested cuts whose outer members are removed after inner scopes drain.
+    Every level edge must still point forward (all in_offsets >= 1) and no
+    SCC member may leak out of its loop container."""
+    for seed in range(6):
+        engine = GraphEngine()
+        generate_cfg(engine, num_nodes=24, edge_prob=0.18, seed=seed)
+        algorithm = ReductionAlgorithm(engine)
+        while algorithm.step() is not None:
+            pass
+        mg = metagraph.build(motif.extract(engine.history))
+
+        rows = model_input.flatten(mg)
+        assert all(off >= 1 for r in rows for off in r["in_offsets"])
+
+        def check_no_leak(g):
+            scc_nodes = set()
+            for m in g.motifs:
+                if m.kind == "loop":
+                    scc_nodes |= set(m.meta["scc"])
+            for m in g.motifs:
+                if m.node is not None:
+                    assert m.node not in scc_nodes
+            for sub in g.subgraphs.values():
+                check_no_leak(sub)
+
+        check_no_leak(mg)
+
+        vocab = model_input.build_vocab(
+            max(1, model_input.max_offset_needed(mg))
+        )
+        tokens = model_input.tokenize(mg, vocab)
+        assert model_input.detokenize(tokens, vocab) == \
+            model_input.sketch_of(mg)
+
+
 def test_unknown_kind_rejected():
     stray = MetaGraph(
         motifs=(Motif(kind="annotate", node=None, preds=(), succs=()),),

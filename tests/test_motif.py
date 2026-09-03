@@ -98,6 +98,47 @@ def test_nested_loop_hierarchy_and_step_uniqueness():
     assert sorted(steps) == list(range(7))
 
 
+def test_parent_map_assigns_outer_members_removed_after_inner_scope():
+    """Regression: consecutive nested cuts (scc 5 -> 3) where the outer-only
+    members are removed AFTER the inner scope drains (the algorithm's Scope
+    is overwritten, not stacked). They must still parent to the outer cut."""
+    ops = [
+        Op(kind="remove_edges", forward={"edges": [("E", "A")]},
+           inverse={"edges": [("E", "A")]},
+           meta={"header": "A", "scc": ["A", "B", "C", "D", "E"]}),
+        Op(kind="remove_edges", forward={"edges": [("E", "C")]},
+           inverse={"edges": [("E", "C")]},
+           meta={"header": "C", "scc": ["C", "D", "E"]}),
+        Op(kind="remove_node", forward={"target": "E"},
+           inverse={"target": "E", "pred_edges": ["D"], "succ_edges": [],
+                    "weight": 1, "node_type": "basic", "weight_deltas": {}}),
+        Op(kind="remove_node", forward={"target": "D"},
+           inverse={"target": "D", "pred_edges": ["C"], "succ_edges": [],
+                    "weight": 1, "node_type": "basic", "weight_deltas": {}}),
+        Op(kind="remove_node", forward={"target": "C"},
+           inverse={"target": "C", "pred_edges": ["B"], "succ_edges": [],
+                    "weight": 1, "node_type": "basic", "weight_deltas": {}}),
+        # outer-only members, removed after the inner scope emptied
+        Op(kind="remove_node", forward={"target": "B"},
+           inverse={"target": "B", "pred_edges": ["A"], "succ_edges": [],
+                    "weight": 1, "node_type": "basic", "weight_deltas": {}}),
+        Op(kind="remove_node", forward={"target": "A"},
+           inverse={"target": "A", "pred_edges": [], "succ_edges": [],
+                    "weight": 1, "node_type": "basic", "weight_deltas": {}}),
+    ]
+    from cfg_reducer.motif import _build_parent_map
+    assert _build_parent_map(ops) == {
+        1: 0, 2: 1, 3: 1, 4: 1, 5: 0, 6: 0,
+    }
+
+    motifs = motif.extract(ops)
+    assert [m.kind for m in motifs] == ["loop"]
+    outer = motifs[0]
+    assert {m.node for m in outer.children if m.node} == {"A", "B"}
+    inner = next(m for m in outer.children if m.kind == "loop")
+    assert {m.node for m in inner.children} == {"C", "D", "E"}
+
+
 def test_unknown_op_kind_is_preserved_not_classified():
     """A5-1: unknown Op kinds must not break extraction. They surface as
     placeholder Motifs; the canonical vocabulary stays entry/linear/merge/

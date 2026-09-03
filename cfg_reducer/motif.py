@@ -44,6 +44,14 @@ def _build_parent_map(ops: list[Op]) -> dict[int, int]:
     Scopes nest: an inner SCC (subset of outer) is tracked as a
     child of the outer `remove_edges`, and its members are removed
     from the outer scope's tracking set.
+
+    Membership is searched down the whole stack, not just the top:
+    the algorithm's Scope is overwritten (not stacked) on nested
+    cuts, so once an inner scope drains, remaining members of an
+    OUTER scc are removed under a global scope — their remove ops
+    appear after the inner scope's, but still belong to the outer
+    loop (e.g. three consecutive cuts 9->7->6 members, then the two
+    outer-only members removed last).
     """
     parent_map: dict[int, int] = {}
     scope_stack: list[tuple[int, set[str]]] = []
@@ -51,22 +59,24 @@ def _build_parent_map(ops: list[Op]) -> dict[int, int]:
     for i, op in enumerate(ops):
         if op.kind == "remove_edges":
             scc = set(op.meta.get("scc", []))
-            if scope_stack:
-                parent_idx, parent_scc = scope_stack[-1]
+            for depth in range(len(scope_stack) - 1, -1, -1):
+                parent_idx, parent_scc = scope_stack[depth]
                 if scc <= parent_scc:
                     parent_map[i] = parent_idx
                     parent_scc -= scc
+                    break
             scope_stack.append((i, scc))
 
         elif op.kind == "remove_node":
             target = op.forward["target"]
-            if scope_stack:
-                parent_idx, scc_nodes = scope_stack[-1]
+            for depth in range(len(scope_stack) - 1, -1, -1):
+                parent_idx, scc_nodes = scope_stack[depth]
                 if target in scc_nodes:
                     parent_map[i] = parent_idx
                     scc_nodes.discard(target)
-                    if not scc_nodes:
-                        scope_stack.pop()
+                    break
+            while scope_stack and not scope_stack[-1][1]:
+                scope_stack.pop()
 
     return parent_map
 
