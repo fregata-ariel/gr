@@ -85,6 +85,28 @@ colab stop -s trainer
 `train_ar.py` の既定値が上記パスに一致するよう設定してあるため、引数なしで
 実行できる。)
 
+## 初回実行結果(run1, 2026-09-03)
+
+データ: `--num-nodes 12 --edge-prob 0.18`, train=0:2000 / val=2000:2200
+(同型 dedup 後 1987 / 198 サンプル、vocab window REF_1..REF_10、最大 39 トークン)。
+Colab T4(torch 2.11 プリインストール、`colab install` 不要)、既定ハイパーパラメータ
+30 epochs、temperature 1.0・top-k なしで 200 本生成。
+
+| 指標 | 値 |
+|---|---|
+| best val loss / token acc | 0.602 / 0.749(epoch 28) |
+| well-formed 率(strict 文法) | **178/200 = 89.0%** |
+| unique 率(well-formed 中) | 178/178 = 100% |
+| novelty 率(train に無い Sketch) | 177/178 = 99.4% |
+| 平均系列長 | 32.5(train 平均と同レンジ) |
+
+制約なしデコードで 9 割が文法を通過し、丸暗記も見られない。生データ・重み・
+history は `runs/run1/`(gitignore 対象、seed から再現可能)。
+
+運用メモ: `colab exec` はファイル実行のみ(引数渡し不可、既定 timeout 30s なので
+`--timeout` 指定必須)。notebook カーネル実行のため `train_ar.py` は
+`parse_known_args` でカーネル引数を無視する。
+
 ## 見送り(将来)
 
 - 文法制約付きデコード(REF 範囲・括弧対応のマスク)— 精度頭打ち時の拡張。

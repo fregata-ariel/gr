@@ -160,7 +160,9 @@ def main(argv=None):
                         help="0 disables top-k filtering")
     parser.add_argument("--gen-max-len", type=int, default=0,
                         help="0 means 2x the training max length")
-    args = parser.parse_args(argv)
+    # parse_known_args: `colab exec` runs this file inside a notebook
+    # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
+    args, _ = parser.parse_known_args(argv)
 
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)

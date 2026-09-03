@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Generated datasets and training runs (reproducible from seeds/manifest)
+data/
+runs/
+
 # Environmetal Speciific files
 .DS_Store
 *.log
