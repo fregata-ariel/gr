@@ -142,3 +142,64 @@ def structural_positions(token_ids: list[int], vocab: dict[str, int]
         depths.append(len(counts) - 1)
         level_counts.append(counts[-1])
     return depths, level_counts
+
+
+# ── pointer context (案 2: pointer-style reference head) ─────────
+
+def pointer_context(token_ids: list[int], vocab: dict[str, int]) -> dict:
+    """
+    Per-token structural context for the pointer head, all as
+    post-state lists aligned with token_ids (tolerant, never raises):
+
+    is_kind    token is a KIND_* (a motif; the only pointer candidates)
+    level_id   index of the enclosing LOOP_START token (-1 at top level)
+    lpos       motifs emitted at the current level so far, i.e. a KIND
+               token's own level position is lpos - 1
+    klast      largest REF offset emitted for the current motif (0 if none)
+    ref_target for position t whose NEXT token is REF_k: the token index
+               of the referenced KIND token (same level, level position
+               (lpos_t - 1) - k), else -1
+
+    Candidate universe for position t (predicting t+1): earlier KIND
+    tokens j with level_id[j] == level_id[t]. The grammar adds
+    lpos_j <= lpos_t - 2 and (lpos_t - 1) - lpos_j > klast_t.
+    """
+    names = {i: t for t, i in vocab.items()}
+    counts = [0]
+    level_stack = [-1]
+    is_kind, level_id, lpos, klast = [], [], [], []
+    current_klast = 0
+    # (level_id, level_position) -> token index of that KIND token
+    kind_at: dict[tuple[int, int], int] = {}
+
+    for idx, token_id in enumerate(token_ids):
+        name = names.get(token_id, "")
+        kind = name.startswith("KIND_")
+        if kind:
+            counts[-1] += 1
+            current_klast = 0
+            kind_at[(level_stack[-1], counts[-1] - 1)] = idx
+        elif name.startswith("REF_"):
+            current_klast = int(name[4:])
+        elif name == "LOOP_START":
+            counts.append(0)
+            level_stack.append(idx)
+            current_klast = 0
+        elif name == "LOOP_END" and len(counts) > 1:
+            counts.pop()
+            level_stack.pop()
+            current_klast = 0
+        is_kind.append(kind)
+        level_id.append(level_stack[-1])
+        lpos.append(counts[-1])
+        klast.append(current_klast)
+
+    ref_target = [-1] * len(token_ids)
+    for t in range(len(token_ids) - 1):
+        name = names.get(token_ids[t + 1], "")
+        if name.startswith("REF_"):
+            k = int(name[4:])
+            ref_target[t] = kind_at.get((level_id[t], (lpos[t] - 1) - k), -1)
+
+    return {"is_kind": is_kind, "level_id": level_id, "lpos": lpos,
+            "klast": klast, "ref_target": ref_target}

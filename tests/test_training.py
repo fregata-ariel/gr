@@ -214,3 +214,44 @@ def test_structural_positions_tolerate_malformed_prefixes():
     depth, count = grammar_mask.structural_positions(ids, vocab)
     assert depth == [0, 0, 0, 0, 0, 1]
     assert count == [0, 0, 0, 0, 1, 0]
+
+
+# ── 案 2: pointer context ────────────────────
+
+def test_pointer_context_nested_loop():
+    vocab = model_input.build_vocab(1)
+    names = ["BOS", "KIND_ENTRY", "KIND_LOOP", "REF_1", "LOOP_START",
+             "KIND_LINEAR", "KIND_LOOP", "REF_1", "LOOP_START",
+             "KIND_LINEAR", "KIND_LINEAR", "REF_1", "LOOP_END", "LOOP_END",
+             "KIND_LINEAR", "REF_1", "EOS"]
+    ids = [vocab[n] for n in names]
+    ctx = grammar_mask.pointer_context(ids, vocab)
+    assert ctx["level_id"] == [-1, -1, -1, -1, 4, 4, 4, 4, 8, 8, 8, 8, 4, -1, -1, -1, -1]
+    # REF_1 at index 3 (after KIND_LOOP at 2) points to KIND_ENTRY at 1
+    assert ctx["ref_target"][2] == 1
+    # inner: REF_1 at 7 -> KIND_LINEAR at 5;  REF_1 at 11 -> KIND_LINEAR at 9
+    assert ctx["ref_target"][6] == 5 and ctx["ref_target"][10] == 9
+    # top-level REF_1 at 15 (after KIND_LINEAR at 14) -> the loop motif at 2
+    assert ctx["ref_target"][14] == 2
+    assert ctx["klast"][3] == 1 and ctx["klast"][4] == 0
+    assert [i for i, k in enumerate(ctx["is_kind"]) if k] == [1, 2, 5, 6, 9, 10, 14]
+
+
+def test_pointer_targets_consistent_on_real_streams():
+    vocab = model_input.build_vocab(12)
+    for seed in range(4):
+        mg = _mg_from_seed(seed)
+        tokens = model_input.tokenize(mg, vocab)
+        ctx = grammar_mask.pointer_context(tokens, vocab)
+        names = {i: t for t, i in vocab.items()}
+        for t in range(len(tokens) - 1):
+            name = names[tokens[t + 1]]
+            if not name.startswith("REF_"):
+                assert ctx["ref_target"][t] == -1
+                continue
+            j = ctx["ref_target"][t]
+            assert j >= 0 and j < t and ctx["is_kind"][j]
+            assert ctx["level_id"][j] == ctx["level_id"][t]
+            k = int(name[4:])
+            assert (ctx["lpos"][j] - 1) == (ctx["lpos"][t] - 1) - k
+            assert k > ctx["klast"][t]          # strictly increasing refs

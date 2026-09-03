@@ -2,19 +2,24 @@
 AR baseline trainer — runs on Colab, torch only, no cfg_reducer
 dependency (docs/design/ar_baseline.md).
 
-Single-file by design: it is the only script uploaded to the VM.
-Defaults match the upload paths in the design note, so it can run with
-no arguments after `colab upload`:
+Uploaded next to grammar_mask.py; defaults match the runbook upload
+paths so it can run with no arguments after `colab upload`.
 
-    python train_ar.py
+Variants (docs/design/representation_experiments.md):
+  baseline        REF_k predicted as vocabulary tokens
+  --struct-pos    案 1  explicit level-count / depth embeddings
+                  (--struct-pos-mode sinusoidal = 案 1')
+  --pointer       案 2  REF predicted by a pointer head over same-level
+                  earlier motifs; the token stream is unchanged
 
-Consumes prepare_tokens.py outputs (vocab.json / meta.json / *.jsonl)
-and writes <out>/model.pt, <out>/history.json, <out>/samples.json.
+Consumes prepare_tokens.py outputs and writes <out>/model.pt,
+history.json, samples.json, val_scores.jsonl.
 """
 
 from __future__ import annotations
 import argparse
 import json
+import math
 import random
 from pathlib import Path
 
@@ -24,7 +29,7 @@ import torch                  # ty: ignore[unresolved-import]
 from torch import nn          # ty: ignore[unresolved-import]
 
 # On the VM grammar_mask.py sits next to this file; locally it lives in
-# the training package. Only needed for --constrained sampling.
+# the training package. Needed for --constrained / --struct-pos / --pointer.
 try:
     import grammar_mask as _gm
 except ImportError:
@@ -34,24 +39,63 @@ except ImportError:
         _gm = None   # ty: ignore[conflicting-declarations, invalid-assignment]
 grammar_mask = _gm
 
+NEG = float("-inf")
+
 
 # ── data ─────────────────────────────────────
 
-def load_rows(path: str | Path) -> list[dict]:
-    return [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+def load_rows(path):
+    return [json.loads(line)
+            for line in Path(path).read_text(encoding="utf-8").splitlines()
+            if line.strip()]
 
 
-def load_streams(path: str | Path) -> list[list[int]]:
+def load_streams(path):
     return [row["tokens"] for row in load_rows(path)]
 
 
-def aux_positions(seqs, vocab):
-    """(depth, level_count) per token for --struct-pos (grammar_mask)."""
-    return [grammar_mask.structural_positions(seq, vocab) for seq in seqs]
+class Vocab:
+    """Token ids plus the collapsed type vocabulary used by --pointer
+    (all REF_k share one type; distance is recovered from the pointer)."""
+
+    def __init__(self, vocab):
+        self.vocab = vocab
+        self.names = {i: t for t, i in vocab.items()}
+        self.pad, self.bos, self.eos = vocab["PAD"], vocab["BOS"], vocab["EOS"]
+        self.ref_ids = {int(t[4:]): i for t, i in vocab.items() if t.startswith("REF_")}
+        self.max_k = max(self.ref_ids) if self.ref_ids else 0
+
+        type_ids, self.type_names = {}, []
+        for name in sorted(vocab, key=vocab.get):
+            key = "REF" if name.startswith("REF_") else name
+            if key not in type_ids:
+                type_ids[key] = len(self.type_names)
+                self.type_names.append(key)
+        self.type_of = [type_ids["REF" if n.startswith("REF_") else n]
+                        for n in sorted(vocab, key=vocab.get)]
+        self.ref_type = type_ids["REF"]
+        self.token_of_type = {type_ids[n]: vocab[n] for n in vocab
+                              if not n.startswith("REF_")}
+
+
+def sequence_aux(seq, vc: Vocab, struct: bool, pointer: bool):
+    """Per-sequence structural inputs (lists aligned with seq)."""
+    aux = {}
+    if struct:
+        depth, lpos = grammar_mask.structural_positions(seq, vc.vocab)
+        aux["depth"], aux["lpos"] = depth, lpos
+    if pointer:
+        ctx = grammar_mask.pointer_context(seq, vc.vocab)
+        aux["is_kind"] = [int(k) for k in ctx["is_kind"]]
+        aux["level_id"] = ctx["level_id"]
+        aux["plpos"] = ctx["lpos"]
+        aux["klast"] = ctx["klast"]
+        aux["ref_target"] = ctx["ref_target"]
+    return aux
+
+
+PAD_VALUE = {"depth": 0, "lpos": 0, "is_kind": 0, "level_id": -2,
+             "plpos": 0, "klast": 0, "ref_target": -1}
 
 
 def _pad(rows, width, fill, device):
@@ -61,23 +105,33 @@ def _pad(rows, width, fill, device):
     return out.to(device)
 
 
-def iter_batches(seqs, batch_size, pad_id, device, rng=None, aux=None):
-    """Yields (tokens, depth, level_count); the aux tensors are None
-    unless aux (from aux_positions) is given."""
+def iter_batches(seqs, auxes, batch_size, pad_id, device, rng=None):
+    """Yields dict batches: tokens plus every aux key present."""
     order = list(range(len(seqs)))
     if rng is not None:
         rng.shuffle(order)
     for i in range(0, len(order), batch_size):
         idx = order[i:i + batch_size]
-        chunk = [seqs[j] for j in idx]
-        width = max(len(s) for s in chunk)
-        tokens = _pad(chunk, width, pad_id, device)
-        if aux is None:
-            yield tokens, None, None
-        else:
-            depth = _pad([aux[j][0] for j in idx], width, 0, device)
-            lpos = _pad([aux[j][1] for j in idx], width, 0, device)
-            yield tokens, depth, lpos
+        width = max(len(seqs[j]) for j in idx)
+        batch = {"tokens": _pad([seqs[j] for j in idx], width, pad_id, device)}
+        for key in auxes[idx[0]]:
+            batch[key] = _pad([auxes[j][key] for j in idx], width,
+                              PAD_VALUE[key], device)
+        yield batch
+
+
+def candidate_mask(is_kind, level_id, plpos, max_k):
+    """(B, L, L) pointer universe: earlier KIND tokens of the same level,
+    1..max_k motifs back. Grammar rules (monotone refs) are NOT applied
+    here — the model learns them; --constrained adds them at sampling."""
+    length = plpos.size(1)
+    t_idx = torch.arange(length, device=plpos.device).view(1, length, 1)
+    j_idx = torch.arange(length, device=plpos.device).view(1, 1, length)
+    dist = plpos.unsqueeze(2) - plpos.unsqueeze(1)          # lpos[t]-lpos[j]
+    return ((j_idx < t_idx)
+            & (level_id.unsqueeze(2) == level_id.unsqueeze(1))
+            & is_kind.unsqueeze(1).bool()
+            & (dist >= 1) & (dist <= max_k))
 
 
 # ── model ────────────────────────────────────
@@ -87,7 +141,7 @@ def sinusoidal_table(size, d_model):
     index, so rarely-seen large counts still get sensible vectors."""
     position = torch.arange(size, dtype=torch.float32)[:, None]
     div = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32)
-                    * (-torch.log(torch.tensor(10000.0)) / d_model))
+                    * (-math.log(10000.0) / d_model))
     table = torch.zeros(size, d_model)
     table[:, 0::2] = torch.sin(position * div)
     table[:, 1::2] = torch.cos(position * div)[:, : d_model // 2]
@@ -98,18 +152,18 @@ class ARBaseline(nn.Module):
     def __init__(self, vocab_size, max_len, pad_id,
                  d_model=128, nhead=4, num_layers=4,
                  dim_feedforward=512, dropout=0.1,
-                 use_struct=False, max_depth=16, struct_mode="learned"):
+                 use_struct=False, max_depth=16, struct_mode="learned",
+                 use_pointer=False, n_types=0):
         super().__init__()
         self.pad_id = pad_id
         self.max_len = max_len
+        self.d_model = d_model
         self.use_struct = use_struct
         self.max_depth = max_depth
+        self.use_pointer = use_pointer
         self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_emb = nn.Embedding(max_len, d_model)
         if use_struct:
-            # 案 1: explicit level-position / depth counters.
-            # 案 1': fixed sinusoidal level position (learned absolute
-            # counts memorised sample-specific structure on small data).
             self.depth_emb = nn.Embedding(max_depth, d_model)
             if struct_mode == "sinusoidal":
                 self.lpos_emb = nn.Embedding.from_pretrained(
@@ -122,9 +176,14 @@ class ARBaseline(nn.Module):
             batch_first=True, norm_first=True,
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers)
-        self.head = nn.Linear(d_model, vocab_size)
+        if use_pointer:
+            self.type_head = nn.Linear(d_model, n_types)
+            self.ptr_q = nn.Linear(d_model, d_model)
+            self.ptr_k = nn.Linear(d_model, d_model)
+        else:
+            self.head = nn.Linear(d_model, vocab_size)
 
-    def forward(self, x, depth=None, lpos=None):
+    def encode(self, x, depth=None, lpos=None):
         length = x.size(1)
         positions = torch.arange(length, device=x.device)
         hidden = self.tok_emb(x) + self.pos_emb(positions)[None]
@@ -135,131 +194,209 @@ class ARBaseline(nn.Module):
                 + self.depth_emb(depth.clamp(max=self.max_depth - 1)) \
                 + self.lpos_emb(lpos.clamp(max=self.max_len - 1))
         causal = nn.Transformer.generate_square_subsequent_mask(
-            length, device=x.device
-        )
-        hidden = self.encoder(
-            hidden, mask=causal, src_key_padding_mask=x.eq(self.pad_id)
-        )
-        return self.head(hidden)
+            length, device=x.device)
+        return self.encoder(hidden, mask=causal,
+                            src_key_padding_mask=x.eq(self.pad_id))
+
+    def forward(self, x, depth=None, lpos=None):
+        return self.head(self.encode(x, depth, lpos))
+
+    def pointer_scores(self, hidden, cand):
+        """(B, L, L) log-domain scores, -inf outside the candidate set."""
+        q, k = self.ptr_q(hidden), self.ptr_k(hidden)
+        scores = q @ k.transpose(1, 2) / math.sqrt(self.d_model)
+        return scores.masked_fill(~cand, NEG)
 
 
-# ── train / eval ─────────────────────────────
+# ── per-token log-likelihood (shared by train / score) ───────────
 
-def _slice_aux(depth, lpos, sl):
-    return (None if depth is None else depth[:, sl],
-            None if lpos is None else lpos[:, sl])
+def token_logprobs(model, batch, vc: Vocab):
+    """Returns (logp, valid): per-target-position log P(next token)
+    and a mask of scored positions. Under --pointer,
+    log P(REF_k) = log P(type=REF) + log P(pointer -> target)."""
+    tokens = batch["tokens"]
+    inputs, targets = tokens[:, :-1], tokens[:, 1:]
+    valid = targets.ne(vc.pad)
+    hidden = model.encode(inputs, *[
+        None if batch.get(k) is None else batch[k][:, :-1]
+        for k in ("depth", "lpos")])
+
+    if not model.use_pointer:
+        logp = torch.log_softmax(model.head(hidden), -1)
+        return logp.gather(-1, targets.unsqueeze(-1)).squeeze(-1), valid
+
+    type_of = torch.tensor(vc.type_of, device=tokens.device)
+    type_targets = type_of[targets]
+    type_logp = torch.log_softmax(model.type_head(hidden), -1)
+    logp = type_logp.gather(-1, type_targets.unsqueeze(-1)).squeeze(-1)
+
+    cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
+                          batch["plpos"][:, :-1], vc.max_k)
+    ref_target = batch["ref_target"][:, :-1]
+    is_ref = ref_target.ge(0) & valid
+    if is_ref.any():
+        scores = model.pointer_scores(hidden, cand)
+        ptr_logp = torch.log_softmax(scores, -1)
+        picked = ptr_logp.gather(-1, ref_target.clamp(min=0).unsqueeze(-1)).squeeze(-1)
+        logp = logp + torch.where(is_ref, picked, torch.zeros_like(picked))
+    return logp, valid
 
 
-def run_epoch(model, seqs, batch_size, pad_id, device,
-              optimizer=None, rng=None, aux=None):
+def run_epoch(model, seqs, auxes, batch_size, vc: Vocab, device,
+              optimizer=None, rng=None):
     training = optimizer is not None
     model.train(training)
-    criterion = nn.CrossEntropyLoss(ignore_index=pad_id)
-
     total_loss = total_tokens = total_correct = 0
     with torch.set_grad_enabled(training):
-        for batch, depth, lpos in iter_batches(
-                seqs, batch_size, pad_id, device, rng, aux):
-            inputs, targets = batch[:, :-1], batch[:, 1:]
-            logits = model(inputs, *_slice_aux(depth, lpos, slice(None, -1)))
-            loss = criterion(
-                logits.reshape(-1, logits.size(-1)), targets.reshape(-1)
-            )
-
+        for batch in iter_batches(seqs, auxes, batch_size, vc.pad, device, rng):
+            logp, valid = token_logprobs(model, batch, vc)
+            n_tokens = int(valid.sum())
+            loss = -(logp * valid).sum() / n_tokens
             if training:
                 optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
-
-            mask = targets.ne(pad_id)
-            n_tokens = int(mask.sum())
-            total_loss += float(loss) * n_tokens
+            total_loss += float(loss.detach()) * n_tokens
             total_tokens += n_tokens
-            total_correct += int(
-                (logits.argmax(-1).eq(targets) & mask).sum()
-            )
-
+            # accuracy: next-token argmax (type-level under --pointer)
+            with torch.no_grad():
+                targets = batch["tokens"][:, 1:]
+                hidden = model.encode(batch["tokens"][:, :-1], *[
+                    None if batch.get(k) is None else batch[k][:, :-1]
+                    for k in ("depth", "lpos")])
+                if model.use_pointer:
+                    type_of = torch.tensor(vc.type_of, device=targets.device)
+                    pred_ok = model.type_head(hidden).argmax(-1).eq(type_of[targets])
+                else:
+                    pred_ok = model.head(hidden).argmax(-1).eq(targets)
+                total_correct += int((pred_ok & valid).sum())
     return total_loss / total_tokens, total_correct / total_tokens
 
 
-def _aux_tensors(model, ids, vocab, device):
-    """(depth, lpos) tensors for one prefix, or (None, None)."""
-    if not model.use_struct:
-        return None, None
-    depth, lpos = grammar_mask.structural_positions(ids, vocab)
-    return (torch.tensor([depth], dtype=torch.long, device=device),
-            torch.tensor([lpos], dtype=torch.long, device=device))
-
-
 @torch.no_grad()
-def score_rows(model, rows, device, vocab=None):
-    """Teacher-forced per-sample scores for the structure analysis:
-    total/mean NLL, token accuracy, and the per-token NLL trace."""
+def score_rows(model, rows, vc: Vocab, device, struct, pointer):
+    """Teacher-forced per-sample scores with the per-token NLL trace."""
     model.eval()
     scored = []
     for row in rows:
-        seq = torch.tensor([row["tokens"]], dtype=torch.long, device=device)
-        inputs, targets = seq[:, :-1], seq[:, 1:]
-        depth, lpos = _aux_tensors(model, row["tokens"][:-1], vocab, device)
-        logits = model(inputs, depth, lpos)
-        log_probs = torch.log_softmax(logits, -1)
-        token_lp = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)[0]
-        n_tokens = targets.size(1)
-        nll = float(-token_lp.sum())
+        seq = row["tokens"]
+        aux = sequence_aux(seq, vc, struct, pointer)
+        batch = {"tokens": _pad([seq], len(seq), vc.pad, device)}
+        for key, values in aux.items():
+            batch[key] = _pad([values], len(seq), PAD_VALUE[key], device)
+        logp, _ = token_logprobs(model, batch, vc)
+        token_nll = [-float(x) for x in logp[0]]
+        n_tokens = len(token_nll)
+        nll = sum(token_nll)
+        # accuracy under --pointer is type-level; kept for continuity
+        hidden = model.encode(batch["tokens"][:, :-1], *[
+            None if batch.get(k) is None else batch[k][:, :-1]
+            for k in ("depth", "lpos")])
+        targets = batch["tokens"][0, 1:]
+        if model.use_pointer:
+            type_of = torch.tensor(vc.type_of, device=device)
+            acc = float(model.type_head(hidden)[0].argmax(-1).eq(type_of[targets]).float().mean())
+        else:
+            acc = float(model.head(hidden)[0].argmax(-1).eq(targets).float().mean())
         scored.append({
-            "sample_id": row.get("sample_id"),
-            "seed": row.get("seed"),
-            "n_tokens": n_tokens,
-            "nll": nll,
-            "nll_per_token": nll / n_tokens,
-            "acc": float(logits.argmax(-1).eq(targets).float().mean()),
-            "token_nll": [round(-float(x), 4) for x in token_lp],
+            "sample_id": row.get("sample_id"), "seed": row.get("seed"),
+            "n_tokens": n_tokens, "nll": nll, "nll_per_token": nll / n_tokens,
+            "acc": acc, "token_nll": [round(x, 4) for x in token_nll],
         })
     return scored
 
 
+# ── sampling ─────────────────────────────────
+
+def _top_k(logits, top_k):
+    if top_k <= 0:
+        return logits
+    keep = torch.topk(logits, min(top_k, int((logits > NEG).sum()))).indices
+    filtered = torch.full_like(logits, NEG)
+    filtered[keep] = logits[keep]
+    return filtered
+
+
 @torch.no_grad()
-def sample_stream(model, vocab, device, max_len, temperature, top_k,
-                  state=None):
-    """state: optional grammar_mask.GrammarState for constrained decoding.
-    With a state, every pick is masked to the grammar and the tail of the
-    budget is spent on the shortest legal path to EOS, so the stream is
-    well-formed by construction."""
+def sample_stream(model, vc: Vocab, device, max_len, temperature, top_k,
+                  state=None, struct=False, pointer=False):
+    """state: optional grammar_mask.GrammarState for constrained decoding
+    (every pick masked to the grammar; the tail of the budget spends on
+    the shortest legal path to EOS). Under --pointer a REF is emitted by
+    sampling the referenced motif and converting to REF_k."""
     model.eval()
-    ids = [vocab["BOS"]]
+    ids = [vc.bos]
     for _ in range(max_len - 1):
-        # +2 guard band: a free KIND_LOOP pick raises the close cost by 2,
-        # so forcing must start before the budget can be jumped over.
         if state is not None and \
                 (max_len - len(ids)) <= state.min_close_cost() + 2:
             next_id = state.forced_close_id()
         else:
+            aux = sequence_aux(ids, vc, struct, pointer)
             x = torch.tensor([ids], dtype=torch.long, device=device)
-            depth, lpos = _aux_tensors(model, ids, vocab, device)
-            logits = model(x, depth, lpos)[0, -1] / temperature
-            logits[vocab["PAD"]] = float("-inf")
-            logits[vocab["BOS"]] = float("-inf")
+            depth = lpos = None
+            if struct:
+                depth = torch.tensor([aux["depth"]], device=device)
+                lpos = torch.tensor([aux["lpos"]], device=device)
+            hidden = model.encode(x, depth, lpos)
+            allowed = None if state is None else set(state.allowed_ids())
 
-            if state is not None:
-                mask = torch.full_like(logits, float("-inf"))
-                mask[state.allowed_ids()] = 0.0
-                logits = logits + mask
-
-            if top_k > 0:
-                keep = torch.topk(logits, min(top_k, logits.size(-1))).indices
-                filtered = torch.full_like(logits, float("-inf"))
-                filtered[keep] = logits[keep]
-                logits = filtered
-
-            next_id = int(torch.multinomial(torch.softmax(logits, -1), 1))
+            if not pointer:
+                logits = model.head(hidden[0, -1]) / temperature
+                logits[vc.pad] = NEG
+                logits[vc.bos] = NEG
+                if allowed is not None:
+                    mask = torch.full_like(logits, NEG)
+                    mask[list(allowed)] = 0.0
+                    logits = logits + mask
+                next_id = int(torch.multinomial(torch.softmax(_top_k(logits, top_k), -1), 1))
+            else:
+                next_id = _sample_pointer_step(
+                    model, hidden, aux, vc, allowed, temperature, top_k, device)
 
         ids.append(next_id)
         if state is not None:
             state.push(next_id)
-        if next_id == vocab["EOS"]:
+        if next_id == vc.eos:
             break
     return ids
+
+
+def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, device):
+    t = hidden.size(1) - 1
+    type_logits = model.type_head(hidden[0, -1]) / temperature
+    type_logits[vc.type_of[vc.pad]] = NEG
+    type_logits[vc.type_of[vc.bos]] = NEG
+
+    # candidate motifs for a REF at this step
+    is_kind = torch.tensor([aux["is_kind"]], device=device)
+    level_id = torch.tensor([aux["level_id"]], device=device)
+    plpos = torch.tensor([aux["plpos"]], device=device)
+    cand = candidate_mask(is_kind, level_id, plpos, vc.max_k)[0, t]
+    if allowed is not None:
+        # grammar: monotone refs & only offsets the grammar allows
+        allowed_ks = {k for k, i in vc.ref_ids.items() if i in allowed}
+        for j in torch.nonzero(cand).flatten().tolist():
+            if (aux["plpos"][t] - aux["plpos"][j]) not in allowed_ks:
+                cand[j] = False
+        allowed_types = {vc.type_of[i] for i in allowed if i not in vc.ref_ids.values()}
+        if cand.any():
+            allowed_types.add(vc.ref_type)
+        mask = torch.full_like(type_logits, NEG)
+        mask[list(allowed_types)] = 0.0
+        type_logits = type_logits + mask
+
+    chosen = int(torch.multinomial(torch.softmax(_top_k(type_logits, top_k), -1), 1))
+    if chosen != vc.ref_type:
+        return vc.token_of_type[chosen]
+    if not cand.any():
+        # unconstrained diagnostic: an impossible reference stays a violation
+        return vc.ref_ids[1]
+    scores = model.pointer_scores(hidden, cand.view(1, 1, -1).expand(1, hidden.size(1), -1))[0, t]
+    scores = scores / temperature
+    j = int(torch.multinomial(torch.softmax(_top_k(scores, top_k), -1), 1))
+    k = aux["plpos"][t] - aux["plpos"][j]
+    return vc.ref_ids[k]
 
 
 # ── main ─────────────────────────────────────
@@ -290,74 +427,60 @@ def main(argv=None):
     parser.add_argument("--gen-max-len", type=int, default=0,
                         help="0 means 2x the training max length")
     parser.add_argument("--constrained", action="store_true",
-                        help="grammar-constrained sampling (needs "
-                             "grammar_mask.py next to this file)")
+                        help="grammar-constrained sampling")
     parser.add_argument("--struct-pos", action="store_true",
-                        help="add explicit level-position / depth "
-                             "embeddings (案 1; needs grammar_mask.py)")
+                        help="案 1: explicit level-position / depth embeddings")
     parser.add_argument("--struct-pos-mode", default="learned",
-                        choices=["learned", "sinusoidal"],
-                        help="level-position table: learned (案 1) or "
-                             "fixed sinusoidal (案 1')")
+                        choices=["learned", "sinusoidal"])
+    parser.add_argument("--pointer", action="store_true",
+                        help="案 2: pointer-style reference head")
     # parse_known_args: `colab exec` runs this file inside a notebook
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
+
+    if (args.struct_pos or args.pointer or args.constrained) and grammar_mask is None:
+        raise SystemExit("this configuration requires grammar_mask.py")
 
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    vocab = json.loads(Path(args.vocab).read_text(encoding="utf-8"))
+    vc = Vocab(json.loads(Path(args.vocab).read_text(encoding="utf-8")))
     meta = json.loads(Path(args.meta).read_text(encoding="utf-8"))
     train_seqs = load_streams(args.train)
     val_rows = load_rows(args.val)
     val_seqs = [row["tokens"] for row in val_rows]
-
-    if args.struct_pos and grammar_mask is None:
-        raise SystemExit("--struct-pos requires grammar_mask.py")
-    train_aux = aux_positions(train_seqs, vocab) if args.struct_pos else None
-    val_aux = aux_positions(val_seqs, vocab) if args.struct_pos else None
+    train_aux = [sequence_aux(s, vc, args.struct_pos, args.pointer) for s in train_seqs]
+    val_aux = [sequence_aux(s, vc, args.struct_pos, args.pointer) for s in val_seqs]
 
     gen_max_len = args.gen_max_len or 2 * meta["max_len"]
     model = ARBaseline(
-        vocab_size=len(vocab),
-        max_len=max(meta["max_len"], gen_max_len),
-        pad_id=vocab["PAD"],
-        d_model=args.d_model, nhead=args.nhead,
-        num_layers=args.num_layers,
-        dim_feedforward=args.dim_feedforward, dropout=args.dropout,
-        use_struct=args.struct_pos, struct_mode=args.struct_pos_mode,
+        vocab_size=len(vc.vocab), max_len=max(meta["max_len"], gen_max_len),
+        pad_id=vc.pad, d_model=args.d_model, nhead=args.nhead,
+        num_layers=args.num_layers, dim_feedforward=args.dim_feedforward,
+        dropout=args.dropout, use_struct=args.struct_pos,
+        struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
+        n_types=len(vc.type_names),
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    history = []
-    best_val = float("inf")
-    best_epoch = 0
-    since_best = 0
+    history, best_val, best_epoch, since_best = [], float("inf"), 0, 0
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = run_epoch(
-            model, train_seqs, args.batch_size, vocab["PAD"], device,
-            optimizer=optimizer, rng=rng, aux=train_aux,
-        )
+            model, train_seqs, train_aux, args.batch_size, vc, device,
+            optimizer=optimizer, rng=rng)
         val_loss, val_acc = run_epoch(
-            model, val_seqs, args.batch_size, vocab["PAD"], device,
-            aux=val_aux,
-        )
-        history.append({
-            "epoch": epoch,
-            "train_loss": train_loss, "train_acc": train_acc,
-            "val_loss": val_loss, "val_acc": val_acc,
-        })
+            model, val_seqs, val_aux, args.batch_size, vc, device)
+        history.append({"epoch": epoch, "train_loss": train_loss,
+                        "train_acc": train_acc, "val_loss": val_loss,
+                        "val_acc": val_acc})
         print(f"epoch {epoch:3d}  train {train_loss:.4f}/{train_acc:.3f}  "
               f"val {val_loss:.4f}/{val_acc:.3f}")
-
         if val_loss < best_val:
-            best_val = val_loss
-            best_epoch = epoch
-            since_best = 0
+            best_val, best_epoch, since_best = val_loss, epoch, 0
             torch.save(model.state_dict(), out / "model.pt")
         else:
             since_best += 1
@@ -365,39 +488,23 @@ def main(argv=None):
                 print(f"early stop at epoch {epoch} (best epoch {best_epoch})")
                 break
 
-    (out / "history.json").write_text(
-        json.dumps(history, indent=2), encoding="utf-8"
-    )
+    (out / "history.json").write_text(json.dumps(history, indent=2), encoding="utf-8")
+    model.load_state_dict(torch.load(out / "model.pt", map_location=device))
 
-    model.load_state_dict(
-        torch.load(out / "model.pt", map_location=device)
-    )
-
-    val_scores = score_rows(model, val_rows, device, vocab)
+    val_scores = score_rows(model, val_rows, vc, device, args.struct_pos, args.pointer)
     (out / "val_scores.jsonl").write_text(
-        "".join(json.dumps(r) + "\n" for r in val_scores), encoding="utf-8"
-    )
-    if args.constrained and grammar_mask is None:
-        raise SystemExit("--constrained requires grammar_mask.py")
+        "".join(json.dumps(r) + "\n" for r in val_scores), encoding="utf-8")
+
     samples = [
-        sample_stream(
-            model, vocab, device, gen_max_len,
-            args.temperature, args.top_k,
-            state=(grammar_mask.GrammarState(vocab)
-                   if args.constrained else None),
-        )
+        sample_stream(model, vc, device, gen_max_len, args.temperature, args.top_k,
+                      state=(grammar_mask.GrammarState(vc.vocab) if args.constrained else None),
+                      struct=args.struct_pos, pointer=args.pointer)
         for _ in range(args.num_samples)
     ]
-    (out / "samples.json").write_text(
-        json.dumps({
-            "best_val_loss": best_val,
-            "best_epoch": best_epoch,
-            "epochs_run": len(history),
-            "config": vars(args),
-            "samples": samples,
-        }, indent=2),
-        encoding="utf-8",
-    )
+    (out / "samples.json").write_text(json.dumps({
+        "best_val_loss": best_val, "best_epoch": best_epoch,
+        "epochs_run": len(history), "config": vars(args), "samples": samples,
+    }, indent=2), encoding="utf-8")
     print(f"wrote {len(samples)} samples to {out / 'samples.json'}")
 
 
