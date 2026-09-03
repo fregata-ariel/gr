@@ -175,3 +175,42 @@ def test_random_walks_over_allowed_ids_are_well_formed():
             ids = _random_walk(vocab, rng, max_len)
             assert len(ids) <= max_len
             model_input.detokenize(ids, vocab)   # must not raise
+
+
+# ── 案 1: structural positions ───────────────
+
+def test_structural_positions_nested_loop():
+    vocab = model_input.build_vocab(1)
+    names = ["BOS", "KIND_ENTRY", "KIND_LOOP", "REF_1", "LOOP_START",
+             "KIND_LINEAR", "KIND_LOOP", "REF_1", "LOOP_START",
+             "KIND_LINEAR", "KIND_LINEAR", "REF_1", "LOOP_END", "LOOP_END",
+             "KIND_LINEAR", "REF_1", "EOS"]
+    ids = [vocab[n] for n in names]
+    depth, count = grammar_mask.structural_positions(ids, vocab)
+    assert depth == [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 1, 0, 0, 0, 0]
+    assert count == [0, 1, 2, 2, 0, 1, 2, 2, 0, 1, 2, 2, 2, 2, 3, 3, 3]
+
+
+def test_structural_positions_match_grammar_state_on_real_streams():
+    for seed in range(3):
+        mg = _mg_from_seed(seed)
+        vocab = model_input.build_vocab(
+            max(1, model_input.max_offset_needed(mg)))
+        tokens = model_input.tokenize(mg, vocab)
+        depth, count = grammar_mask.structural_positions(tokens, vocab)
+
+        state = grammar_mask.GrammarState(vocab)
+        assert (depth[0], count[0]) == (state.depth, state.level_count)
+        for i, tok in enumerate(tokens[1:], start=1):
+            state.push(tok)
+            assert (depth[i], count[i]) == (state.depth, state.level_count)
+
+
+def test_structural_positions_tolerate_malformed_prefixes():
+    vocab = model_input.build_vocab(1)
+    # stray LOOP_END at depth 0, REF before any motif, PAD inside
+    names = ["BOS", "LOOP_END", "REF_1", "PAD", "KIND_ENTRY", "LOOP_START"]
+    ids = [vocab[n] for n in names]
+    depth, count = grammar_mask.structural_positions(ids, vocab)
+    assert depth == [0, 0, 0, 0, 0, 1]
+    assert count == [0, 0, 0, 0, 1, 0]

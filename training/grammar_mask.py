@@ -35,6 +35,16 @@ class GrammarState:
 
     # ── queries ──────────────────────────────
 
+    @property
+    def depth(self) -> int:
+        return len(self._counts) - 1
+
+    @property
+    def level_count(self) -> int:
+        """Motifs emitted so far at the current level (matches
+        structural_positions for the same prefix)."""
+        return self._counts[-1]
+
     def allowed_ids(self) -> list[int]:
         """Token ids that keep the stream well-formed."""
         if self.done:
@@ -100,3 +110,35 @@ class GrammarState:
             self.done = True
         else:   # BOS / PAD never reach push in a constrained sampler
             raise ValueError(f"unexpected token {name}")
+
+
+# ── structural positions (案 1: explicit level-position / depth) ──
+
+def structural_positions(token_ids: list[int], vocab: dict[str, int]
+                         ) -> tuple[list[int], list[int]]:
+    """
+    Per-token (depth, level_count) AFTER consuming that token — the
+    counter the model otherwise has to infer implicitly.
+
+    depth        nesting depth the stream is in after the token
+    level_count  motifs emitted so far at the current level
+
+    Tolerant by design (never raises), so it can also annotate
+    malformed prefixes during unconstrained diagnostic sampling:
+    a stray LOOP_END at depth 0 and REF/EOS/PAD leave the state as is.
+    """
+    names = {i: t for t, i in vocab.items()}
+    counts = [0]
+    depths: list[int] = []
+    level_counts: list[int] = []
+    for token_id in token_ids:
+        name = names.get(token_id, "")
+        if name.startswith("KIND_"):
+            counts[-1] += 1
+        elif name == "LOOP_START":
+            counts.append(0)
+        elif name == "LOOP_END" and len(counts) > 1:
+            counts.pop()
+        depths.append(len(counts) - 1)
+        level_counts.append(counts[-1])
+    return depths, level_counts
