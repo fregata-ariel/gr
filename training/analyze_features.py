@@ -23,6 +23,13 @@ NON_FEATURES = {"sample_id", "seed", "nll", "nll_per_token", "acc",
                 "n_tokens"}
 
 
+def _is_token_class(name: str) -> bool:
+    """Columns derived from the score itself (nll_*_mean, n_*_tokens):
+    they say WHICH tokens are hard, not which structure is hard."""
+    return name.startswith("nll_") or (
+        name.startswith("n_") and name.endswith("_tokens"))
+
+
 def _ranks(values: list[float]) -> list[float]:
     order = sorted(range(len(values)), key=lambda i: values[i])
     ranks = [0.0] * len(values)
@@ -61,7 +68,10 @@ def auc(feature: list[float], is_hard: list[bool]) -> float | None:
     return (rank_sum - n_h * (n_h + 1) / 2) / (n_h * n_e)
 
 
-def analyze(rows: list[dict], target: str) -> list[dict]:
+def analyze(rows: list[dict], target: str,
+            token_class: bool = False) -> list[dict]:
+    """Rank features by separability. token_class=False -> structural
+    features only; True -> the score-derived token-class columns."""
     y = [r[target] for r in rows]
     median = sorted(y)[len(y) // 2]
     is_hard = [v > median for v in y]
@@ -69,6 +79,7 @@ def analyze(rows: list[dict], target: str) -> list[dict]:
     features = sorted(
         k for k in rows[0]
         if k not in NON_FEATURES and k != target
+        and _is_token_class(k) == token_class
         and all(isinstance(r.get(k), (int, float)) for r in rows)
     )
     results = []
@@ -87,6 +98,8 @@ def analyze(rows: list[dict], target: str) -> list[dict]:
 
 def _print(title: str, results: list[dict], top: int) -> None:
     print(f"\n## {title}  (n={results[0]['n'] if results else 0})")
+    if not results:
+        return
     print(f"{'feature':20s} {'spearman':>9s} {'AUC(hard)':>10s}")
     for r in results[:top]:
         sp = f"{r['spearman']:+.3f}" if r["spearman"] is not None else "   n/a"
@@ -108,9 +121,12 @@ def main(argv: list[str] | None = None) -> None:
         rows = read_jsonl(path)
         pooled.extend(rows)
         if len(args.table) > 1:
-            _print(Path(path).parent.name, analyze(rows, args.target), args.top)
-    _print("pooled" if len(args.table) > 1 else Path(args.table[0]).parent.name,
-           analyze(pooled, args.target), args.top)
+            _print(f"{Path(path).parent.name} — structure",
+                   analyze(rows, args.target), args.top)
+    label = "pooled" if len(args.table) > 1 else Path(args.table[0]).parent.name
+    _print(f"{label} — structure", analyze(pooled, args.target), args.top)
+    _print(f"{label} — token class (score-derived)",
+           analyze(pooled, args.target, token_class=True), args.top)
 
 
 if __name__ == "__main__":
