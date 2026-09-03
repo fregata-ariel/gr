@@ -82,11 +82,23 @@ def iter_batches(seqs, batch_size, pad_id, device, rng=None, aux=None):
 
 # ── model ────────────────────────────────────
 
+def sinusoidal_table(size, d_model):
+    """Fixed sinusoidal encoding (size x d_model) — smooth in the
+    index, so rarely-seen large counts still get sensible vectors."""
+    position = torch.arange(size, dtype=torch.float32)[:, None]
+    div = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32)
+                    * (-torch.log(torch.tensor(10000.0)) / d_model))
+    table = torch.zeros(size, d_model)
+    table[:, 0::2] = torch.sin(position * div)
+    table[:, 1::2] = torch.cos(position * div)[:, : d_model // 2]
+    return table
+
+
 class ARBaseline(nn.Module):
     def __init__(self, vocab_size, max_len, pad_id,
                  d_model=128, nhead=4, num_layers=4,
                  dim_feedforward=512, dropout=0.1,
-                 use_struct=False, max_depth=16):
+                 use_struct=False, max_depth=16, struct_mode="learned"):
         super().__init__()
         self.pad_id = pad_id
         self.max_len = max_len
@@ -95,9 +107,15 @@ class ARBaseline(nn.Module):
         self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_emb = nn.Embedding(max_len, d_model)
         if use_struct:
-            # 案 1: explicit level-position / depth counters
+            # 案 1: explicit level-position / depth counters.
+            # 案 1': fixed sinusoidal level position (learned absolute
+            # counts memorised sample-specific structure on small data).
             self.depth_emb = nn.Embedding(max_depth, d_model)
-            self.lpos_emb = nn.Embedding(max_len, d_model)
+            if struct_mode == "sinusoidal":
+                self.lpos_emb = nn.Embedding.from_pretrained(
+                    sinusoidal_table(max_len, d_model), freeze=True)
+            else:
+                self.lpos_emb = nn.Embedding(max_len, d_model)
         layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead,
             dim_feedforward=dim_feedforward, dropout=dropout,
@@ -277,6 +295,10 @@ def main(argv=None):
     parser.add_argument("--struct-pos", action="store_true",
                         help="add explicit level-position / depth "
                              "embeddings (案 1; needs grammar_mask.py)")
+    parser.add_argument("--struct-pos-mode", default="learned",
+                        choices=["learned", "sinusoidal"],
+                        help="level-position table: learned (案 1) or "
+                             "fixed sinusoidal (案 1')")
     # parse_known_args: `colab exec` runs this file inside a notebook
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
@@ -304,7 +326,7 @@ def main(argv=None):
         d_model=args.d_model, nhead=args.nhead,
         num_layers=args.num_layers,
         dim_feedforward=args.dim_feedforward, dropout=args.dropout,
-        use_struct=args.struct_pos,
+        use_struct=args.struct_pos, struct_mode=args.struct_pos_mode,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
