@@ -163,7 +163,7 @@ class ARBaseline(nn.Module):
                  dim_feedforward=512, dropout=0.1,
                  use_struct=False, max_depth=16, struct_mode="learned",
                  use_pointer=False, n_types=0, pointer_legal=False,
-                 pointer_dist_bias=False, max_k=0):
+                 pointer_dist_bias=False, max_k=0, dist_bias_mode="scalar"):
         super().__init__()
         self.pad_id = pad_id
         self.max_len = max_len
@@ -173,6 +173,7 @@ class ARBaseline(nn.Module):
         self.use_pointer = use_pointer
         self.pointer_legal = pointer_legal
         self.pointer_dist_bias = pointer_dist_bias
+        self.dist_bias_mode = dist_bias_mode
         self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_emb = nn.Embedding(max_len, d_model)
         if use_struct:
@@ -192,7 +193,12 @@ class ARBaseline(nn.Module):
             self.type_head = nn.Linear(d_model, n_types)
             self.ptr_q = nn.Linear(d_model, d_model)
             self.ptr_k = nn.Linear(d_model, d_model)
-            if pointer_dist_bias:
+            if pointer_dist_bias and dist_bias_mode == "context":
+                # 案 2'': context-conditional distance logits — with a
+                # zero content term this reduces to the baseline's
+                # distance classification over the legal offsets.
+                self.dist_head = nn.Linear(d_model, max_k + 1)
+            elif pointer_dist_bias:
                 self.dist_bias = nn.Embedding(max_k + 1, 1)
                 nn.init.zeros_(self.dist_bias.weight)
         else:
@@ -224,8 +230,13 @@ class ARBaseline(nn.Module):
         if self.pointer_dist_bias:
             if dist is None:
                 raise ValueError("dist bias needs the distance matrix")
-            scores = scores + self.dist_bias(
-                dist.clamp(max=self.dist_bias.num_embeddings - 1)).squeeze(-1)
+            if self.dist_bias_mode == "context":
+                per_k = self.dist_head(hidden)                 # (B, L, K+1)
+                idx = dist.clamp(max=per_k.size(-1) - 1)       # (B, L, L)
+                scores = scores + per_k.gather(-1, idx)
+            else:
+                scores = scores + self.dist_bias(
+                    dist.clamp(max=self.dist_bias.num_embeddings - 1)).squeeze(-1)
         return scores.masked_fill(~cand, NEG)
 
 
@@ -465,6 +476,10 @@ def main(argv=None):
                              "candidates (farther than the last offset)")
     parser.add_argument("--pointer-dist-bias", action="store_true",
                         help="案 2': learned per-distance bias on scores")
+    parser.add_argument("--pointer-dist-bias-mode", default="scalar",
+                        choices=["scalar", "context"],
+                        help="scalar (案 2') or context-conditional "
+                             "distance logits (案 2'')")
     # parse_known_args: `colab exec` runs this file inside a notebook
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
@@ -493,6 +508,7 @@ def main(argv=None):
         struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
         n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
         pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
+        dist_bias_mode=args.pointer_dist_bias_mode,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
