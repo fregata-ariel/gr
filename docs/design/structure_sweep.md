@@ -1,7 +1,7 @@
 # ノード数細分 + 構造特徴スイープ(計画)
 
 作成日: 2026-09-03
-状態: **計画確定**(n24 学習投資スタディ完了、着手可)
+状態: **段階 1 実行中**(スイープ 8 点を飽和学習中)
 前提: `docs/design/scale_experiments.md`(ノード数 12→24→48 で非制約 WF が
 89→46.5→8% に急落、`ref_out_of_range` が全スケールで支配的)
 
@@ -12,14 +12,28 @@
 分離し、表現改善(REF の相対位置バイアス、カウント補助等)の要否と対象を
 特定する。
 
+## 進め方(3 段、2026-09-03 合意)
+
+1. **スイープ + 飽和学習**(本段): ノード数ごとに seed 範囲を分離し、
+   各点を early stopping で飽和まで学習する。学習時に val の per-sample
+   NLL(トークン単位の trace 含む)を出力しておく。
+2. **特徴量探索**: 難度(NLL)・違反を分類できる構造特徴を幅広く試す
+   (`training/structure_features.py` + `training/analyze_features.py`)。
+3. **評価軸化**: 分離力のある特徴を評価軸として固定し、以後のモデル比較・
+   データ設計の指標にする。
+
 ## 実験軸
 
 - **ノード数細分**: 12, 16, 20, 24, 28, 32, 40, 48 の 8 点
-  (train=0:2000 / val=2000:2200、`edge_prob 0.18` 固定)
-- **モデル・学習設定**: 128d/4L・80 epochs・best checkpoint で全点固定
-  (n24 スタディの結論: 容量増は val loss の床 ~0.75 を下げず、既定モデルは
-  epoch 57 まで改善。詳細は scale_experiments.md「n24 学習投資スタディ」)
-  (投資軸を凍結し、構造軸だけを動かす)
+  (`edge_prob 0.18` 固定、train 2000 / val 200)
+- **seed 分離**: ノード数 index i ごとに seed 基点 `i * 100000`
+  (train=[base, base+2000)、val=[base+2000, base+2200))。生成器の乱数列を
+  ノード数間で共有しない。
+- **飽和学習**: 128d/4L 固定、`--epochs 300 --patience 20`(val loss が
+  20 epoch 改善しなければ停止、best checkpoint を採用)。n24 スタディの
+  結論(容量増は床を下げない、best epoch ~57)に基づき epochs 上限ではなく
+  early stopping で各点を飽和させる。
+- **診断サンプリング**: 非制約 400 本(±2.5pp 精度)。
 
 ## サンプル単位の構造特徴
 
@@ -40,8 +54,9 @@ canonical sample(または MetaGraph)から機械的に計算する:
    サンプル単位に再スコアリング(CPU セッションで可)。構造特徴との相関を
    (a) ノード数プール全体、(b) 同一ノード数内の層別 — の両方で取り、
    ノード数と特徴の交絡を制御する。
-   ※ per-sample スコア出力スクリプト(`training/score_samples.py` 相当)の
-   追加実装が必要。
+   per-sample スコアは `train_ar.py` が学習終了時に `val_scores.jsonl` として
+   出力する(トークン単位 NLL trace 付き)。特徴結合は
+   `training/structure_features.py`、分離力の評価は `training/analyze_features.py`。
 2. **生成側の違反位置分析**
    非制約生成の違反を「違反発生時点の階層幅・ネスト深さ・レベル内位置・
    REF 超過量」で集計(`eval_samples` の違反シミュレータを拡張)。
