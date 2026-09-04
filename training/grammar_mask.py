@@ -203,3 +203,30 @@ def pointer_context(token_ids: list[int], vocab: dict[str, int]) -> dict:
 
     return {"is_kind": is_kind, "level_id": level_id, "lpos": lpos,
             "klast": klast, "ref_target": ref_target}
+
+
+# ── legal REF offsets (B: baseline + the pointer's legal universe) ──
+
+def legal_offsets(token_ids: list[int], vocab: dict[str, int],
+                  max_k: int) -> list[list[int]]:
+    """
+    Per position t, the offsets k for which REF_k lies in the pointer's
+    legal candidate universe when predicting token t+1:
+
+        klast_t < k <= min(max_k, lpos_t - 1)
+
+    This is exactly train_ar.candidate_mask (案 2', --pointer-legal)
+    projected onto offsets — every level position 0..lpos_t-1 holds one
+    KIND token of the same level — so a vocabulary baseline masked with
+    it shares the pointer model's output space (external review
+    2026-09-04, 1-2). Note it is deliberately the *candidate* universe,
+    not the full grammar: after LOOP_END the grammar forbids a REF but
+    the universe is non-empty, as it is for the pointer. Empty list ==
+    "REF impossible here" (the REF type mask).
+    """
+    ctx = pointer_context(token_ids, vocab)
+    out: list[list[int]] = []
+    for lpos, klast in zip(ctx["lpos"], ctx["klast"]):
+        hi = min(max_k, lpos - 1)
+        out.append(list(range(klast + 1, hi + 1)) if hi > klast else [])
+    return out
