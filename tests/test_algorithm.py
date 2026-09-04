@@ -113,3 +113,32 @@ def test_full_undo_restores_initial_graph():
     while algorithm.redo() is not None:
         pass
     assert engine.is_empty()
+
+
+# ── determinism: independent of successor iteration order ──
+
+def test_tarjan_scc_order_is_independent_of_successor_iteration_order():
+    from cfg_reducer.algorithm import tarjan_scc
+    # entry E feeds two sibling loops L1<->L1a and L2<->L2a
+    adj = {"E": ["L1", "L2"], "L1": ["L1a"], "L1a": ["L1"],
+           "L2": ["L2a"], "L2a": ["L2"]}
+    nodes = set(adj)
+    forward = tarjan_scc(nodes, lambda n: adj[n])
+    reverse = tarjan_scc(nodes, lambda n: list(reversed(adj[n])))
+    assert forward == reverse
+
+
+def test_reduction_sketch_is_independent_of_successor_iteration_order():
+    """Seed 300607 / 24 nodes flipped its sibling-loop order between
+    processes before children were sorted in tarjan_scc."""
+    from cfg_reducer import dataset, model_input
+    from cfg_reducer.generate import generate_cfg
+
+    def sketch(order):
+        engine = GraphEngine()
+        generate_cfg(engine, num_nodes=24, edge_prob=0.18, seed=300607)
+        original = engine.successors
+        engine.successors = lambda nid: sorted(original(nid), reverse=order)  # ty: ignore[invalid-assignment]
+        return model_input.sketch_of(dataset.reduce_to_metagraph(engine))
+
+    assert sketch(False) == sketch(True)

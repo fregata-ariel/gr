@@ -11,6 +11,11 @@ Variants (docs/design/representation_experiments.md):
                   (--struct-pos-mode sinusoidal = 案 1')
   --pointer       案 2  REF predicted by a pointer head over same-level
                   earlier motifs; the token stream is unchanged
+  --ref-legal-mask  B   vocabulary baseline whose REF_k logits are masked
+                  to the pointer's legal universe (same output space as
+                  --pointer-legal; external review 2026-09-04, 1-2)
+  --test / --sample-seed / --constrained-samples  B  held-out scoring,
+                  paired sampling RNG, constrained samples alongside
 
 Consumes prepare_tokens.py outputs and writes <out>/model.pt,
 history.json, samples.json, val_scores.jsonl.
@@ -157,15 +162,47 @@ def sinusoidal_table(size, d_model):
     return table
 
 
+def ref_vocab_mask(plpos, klast, vc: Vocab):
+    """(B, L, V) additive mask for the vocabulary baseline: 0 everywhere,
+    -inf on REF_k outside the pointer's legal universe
+    klast < k <= lpos - 1 (== grammar_mask.legal_offsets). Where no k is
+    legal every REF_k is masked — the REF type mask of --pointer-legal."""
+    ks = torch.arange(1, vc.max_k + 1, device=plpos.device)
+    legal = (ks > klast.unsqueeze(-1)) & (ks <= (plpos - 1).unsqueeze(-1))
+    mask = torch.zeros(*plpos.shape, len(vc.vocab), device=plpos.device)
+    ref_index = torch.tensor([vc.ref_ids[k] for k in range(1, vc.max_k + 1)],
+                             device=plpos.device)
+    mask[..., ref_index] = torch.where(legal, 0.0, NEG)
+    return mask
+
+
+def check_ref_mask(seqs, vc: Vocab, device, limit=200):
+    """VM self-check: the torch mask equals grammar_mask.legal_offsets."""
+    for seq in seqs[:limit]:
+        aux = sequence_aux(seq, vc, False, True)
+        plpos = torch.tensor([aux["plpos"]], device=device)
+        klast = torch.tensor([aux["klast"]], device=device)
+        mask = ref_vocab_mask(plpos, klast, vc)[0]
+        ref = grammar_mask.legal_offsets(seq, vc.vocab, vc.max_k)
+        for t in range(len(seq)):
+            legal = sorted(k for k, i in vc.ref_ids.items() if mask[t, i] == 0)
+            if legal != ref[t]:
+                raise AssertionError(f"mask mismatch at {t}: {legal} vs {ref[t]}")
+    return True
+
+
 class ARBaseline(nn.Module):
     def __init__(self, vocab_size, max_len, pad_id,
                  d_model=128, nhead=4, num_layers=4,
                  dim_feedforward=512, dropout=0.1,
                  use_struct=False, max_depth=16, struct_mode="learned",
                  use_pointer=False, n_types=0, pointer_legal=False,
-                 pointer_dist_bias=False, max_k=0, dist_bias_mode="scalar"):
+                 pointer_dist_bias=False, max_k=0, dist_bias_mode="scalar",
+                 ref_legal_mask=False):
         super().__init__()
         self.pad_id = pad_id
+        self.max_k = max_k
+        self.ref_legal_mask = ref_legal_mask
         self.max_len = max_len
         self.d_model = d_model
         self.use_struct = use_struct
@@ -257,7 +294,11 @@ def token_logprobs(model, batch, vc: Vocab):
         for k in ("depth", "lpos")])
 
     if not model.use_pointer:
-        logp = torch.log_softmax(model.head(hidden), -1)
+        logits = model.head(hidden)
+        if model.ref_legal_mask:
+            logits = logits + ref_vocab_mask(
+                batch["plpos"][:, :-1], batch["klast"][:, :-1], vc)
+        logp = torch.log_softmax(logits, -1)
         return logp.gather(-1, targets.unsqueeze(-1)).squeeze(-1), valid
 
     type_of = torch.tensor(vc.type_of, device=tokens.device)
@@ -313,7 +354,11 @@ def run_epoch(model, seqs, auxes, batch_size, vc: Vocab, device,
                     type_of = torch.tensor(vc.type_of, device=targets.device)
                     pred_ok = model.type_head(hidden).argmax(-1).eq(type_of[targets])
                 else:
-                    pred_ok = model.head(hidden).argmax(-1).eq(targets)
+                    logits = model.head(hidden)
+                    if model.ref_legal_mask:
+                        logits = logits + ref_vocab_mask(
+                            batch["plpos"][:, :-1], batch["klast"][:, :-1], vc)
+                    pred_ok = logits.argmax(-1).eq(targets)
                 total_correct += int((pred_ok & valid).sum())
     return total_loss / total_tokens, total_correct / total_tokens
 
@@ -323,6 +368,8 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
     """Teacher-forced per-sample scores with the per-token NLL trace."""
     model.eval()
     scored = []
+    ref_id_set = set(vc.ref_ids.values())
+    k_of_id = {i: k for k, i in vc.ref_ids.items()}
     for row in rows:
         seq = row["tokens"]
         aux = sequence_aux(seq, vc, struct, pointer)
@@ -338,17 +385,58 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
             None if batch.get(k) is None else batch[k][:, :-1]
             for k in ("depth", "lpos")])
         targets = batch["tokens"][0, 1:]
+        ref_pos = [t for t, tok in enumerate(targets.tolist()) if tok in ref_id_set]
+        ref_k = [k_of_id[int(targets[t])] for t in ref_pos]
         if model.use_pointer:
             type_of = torch.tensor(vc.type_of, device=device)
             acc = float(model.type_head(hidden)[0].argmax(-1).eq(type_of[targets]).float().mean())
+            ref_correct, ref_type_nll = _pointer_ref_stats(model, hidden, batch, vc, ref_pos)
         else:
-            acc = float(model.head(hidden)[0].argmax(-1).eq(targets).float().mean())
+            logits = model.head(hidden)[0]
+            if model.ref_legal_mask:
+                logits = logits + ref_vocab_mask(
+                    batch["plpos"][:, :-1], batch["klast"][:, :-1], vc)[0]
+            acc = float(logits.argmax(-1).eq(targets).float().mean())
+            ref_index = torch.tensor([vc.ref_ids[k] for k in range(1, vc.max_k + 1)],
+                                     device=device)
+            pred_k = logits[:, ref_index].argmax(-1) + 1
+            ref_correct = [int(int(pred_k[t]) == k) for t, k in zip(ref_pos, ref_k)]
+            # log P(any REF) = logsumexp over REF_k: the type cost inside NLL(REF_k)
+            type_lp = torch.logsumexp(torch.log_softmax(logits, -1)[:, ref_index], -1)
+            ref_type_nll = [round(-float(type_lp[t]), 4) for t in ref_pos]
         scored.append({
             "sample_id": row.get("sample_id"), "seed": row.get("seed"),
             "n_tokens": n_tokens, "nll": nll, "nll_per_token": nll / n_tokens,
             "acc": acc, "token_nll": [round(x, 4) for x in token_nll],
+            # edge accuracy: at REF targets, did the argmax reference match?
+            # ref_type_nll: -log P(REF type) there, so NLL(REF_k) - ref_type_nll
+            # is the offset-only cost comparable to a frequency prior over k
+            "ref_pos": ref_pos, "ref_k": ref_k, "ref_correct": ref_correct,
+            "ref_type_nll": ref_type_nll,
         })
     return scored
+
+
+def _pointer_ref_stats(model, hidden, batch, vc: Vocab, ref_pos):
+    """(ref_correct, ref_type_nll) at REF targets for the pointer model."""
+    if not ref_pos:
+        return [], []
+    plpos = batch["plpos"][:, :-1]
+    cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
+                          plpos, vc.max_k,
+                          batch["klast"][:, :-1] if model.pointer_legal else None)
+    scores = model.pointer_scores(hidden, cand, pointer_dist(plpos))[0]
+    target = batch["ref_target"][0, :-1]
+    pred = scores.argmax(-1)
+    type_logits = model.type_head(hidden)[0]
+    if model.pointer_legal:                  # same REF-type mask as token_logprobs
+        no_cand = ~cand[0].any(-1)
+        type_logits = type_logits.masked_fill(
+            no_cand.unsqueeze(-1) & (torch.arange(type_logits.size(-1), device=hidden.device) == vc.ref_type),
+            NEG)
+    type_lp = torch.log_softmax(type_logits, -1)[:, vc.ref_type]
+    return ([int(int(pred[t]) == int(target[t])) for t in ref_pos],
+            [round(-float(type_lp[t]), 4) for t in ref_pos])
 
 
 # ── sampling ─────────────────────────────────
@@ -385,10 +473,15 @@ def sample_stream(model, vc: Vocab, device, max_len, temperature, top_k,
             hidden = model.encode(x, depth, lpos)
             allowed = None if state is None else set(state.allowed_ids())
 
-            if not pointer:
+            if not model.use_pointer:
                 logits = model.head(hidden[0, -1]) / temperature
                 logits[vc.pad] = NEG
                 logits[vc.bos] = NEG
+                if model.ref_legal_mask:
+                    lpos_t, klast_t = aux["plpos"][-1], aux["klast"][-1]
+                    for k, ref_id in vc.ref_ids.items():
+                        if not (klast_t < k <= lpos_t - 1):
+                            logits[ref_id] = NEG
                 if allowed is not None:
                     mask = torch.full_like(logits, NEG)
                     mask[list(allowed)] = 0.0
@@ -492,6 +585,19 @@ def build_parser():
                         choices=["scalar", "context"],
                         help="scalar (案 2') or context-conditional "
                              "distance logits (案 2'')")
+    parser.add_argument("--ref-legal-mask", action="store_true",
+                        help="B control: vocabulary baseline whose REF_k "
+                             "logits are masked to the pointer's legal "
+                             "universe (train / score / sample)")
+    parser.add_argument("--test", default=None,
+                        help="held-out split to score after training "
+                             "(test_scores.jsonl); never used for early stopping")
+    parser.add_argument("--sample-seed", type=int, default=None,
+                        help="RNG seed for sampling (default: --seed); "
+                             "pair it across models")
+    parser.add_argument("--constrained-samples", type=int, default=0,
+                        help="also write N grammar-constrained samples to "
+                             "samples_constrained.json")
     return parser
 
 
@@ -507,6 +613,7 @@ def build_model(vc: Vocab, meta: dict, args, gen_max_len: int):
         n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
         pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
         dist_bias_mode=args.pointer_dist_bias_mode,
+        ref_legal_mask=getattr(args, "ref_legal_mask", False),
     )
 
 
@@ -516,8 +623,11 @@ def main(argv=None):
     # kernel whose sys.argv carries kernel flags (-f /path/kernel.json).
     args, _ = parser.parse_known_args(argv)
 
-    if (args.struct_pos or args.pointer or args.constrained) and grammar_mask is None:
+    needs_grammar = (args.struct_pos or args.pointer or args.constrained
+                     or args.ref_legal_mask or args.constrained_samples)
+    if needs_grammar and grammar_mask is None:
         raise SystemExit("this configuration requires grammar_mask.py")
+    aux_ctx = args.pointer or args.ref_legal_mask   # pointer context needed
 
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
@@ -528,8 +638,8 @@ def main(argv=None):
     train_seqs = load_streams(args.train)
     val_rows = load_rows(args.val)
     val_seqs = [row["tokens"] for row in val_rows]
-    train_aux = [sequence_aux(s, vc, args.struct_pos, args.pointer) for s in train_seqs]
-    val_aux = [sequence_aux(s, vc, args.struct_pos, args.pointer) for s in val_seqs]
+    train_aux = [sequence_aux(s, vc, args.struct_pos, aux_ctx) for s in train_seqs]
+    val_aux = [sequence_aux(s, vc, args.struct_pos, aux_ctx) for s in val_seqs]
 
     gen_max_len = args.gen_max_len or 2 * meta["max_len"]
     model = build_model(vc, meta, args, gen_max_len).to(device)
@@ -562,21 +672,40 @@ def main(argv=None):
     (out / "history.json").write_text(json.dumps(history, indent=2), encoding="utf-8")
     model.load_state_dict(torch.load(out / "model.pt", map_location=device))
 
-    val_scores = score_rows(model, val_rows, vc, device, args.struct_pos, args.pointer)
+    val_scores = score_rows(model, val_rows, vc, device, args.struct_pos, aux_ctx)
     (out / "val_scores.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in val_scores), encoding="utf-8")
+    if args.test:
+        test_scores = score_rows(model, load_rows(args.test), vc, device,
+                                 args.struct_pos, aux_ctx)
+        (out / "test_scores.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in test_scores), encoding="utf-8")
+        total_nll = sum(r["nll"] for r in test_scores)
+        total_tok = sum(r["n_tokens"] for r in test_scores)
+        print(f"test NLL/token {total_nll / total_tok:.4f}")
 
-    samples = [
-        sample_stream(model, vc, device, gen_max_len, args.temperature, args.top_k,
-                      state=(grammar_mask.GrammarState(vc.vocab) if args.constrained else None),
-                      struct=args.struct_pos, pointer=args.pointer)
-        for _ in range(args.num_samples)
-    ]
+    sample_seed = args.seed if args.sample_seed is None else args.sample_seed
+
+    def draw(n, constrained):
+        torch.manual_seed(sample_seed)      # paired sampling RNG across models
+        return [
+            sample_stream(model, vc, device, gen_max_len, args.temperature, args.top_k,
+                          state=(grammar_mask.GrammarState(vc.vocab) if constrained else None),
+                          struct=args.struct_pos, pointer=aux_ctx)
+            for _ in range(n)
+        ]
+
+    samples = draw(args.num_samples, args.constrained)
     (out / "samples.json").write_text(json.dumps({
         "best_val_loss": best_val, "best_epoch": best_epoch,
         "epochs_run": len(history), "config": vars(args), "samples": samples,
     }, indent=2), encoding="utf-8")
     print(f"wrote {len(samples)} samples to {out / 'samples.json'}")
+    if args.constrained_samples:
+        constrained = draw(args.constrained_samples, True)
+        (out / "samples_constrained.json").write_text(json.dumps({
+            "config": vars(args), "samples": constrained}, indent=2), encoding="utf-8")
+        print(f"wrote {len(constrained)} constrained samples")
 
 
 if __name__ == "__main__":

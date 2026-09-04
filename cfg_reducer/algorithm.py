@@ -94,11 +94,15 @@ def tarjan_scc(node_ids: set[str], succ_fn) -> list[set[str]]:
                 on_stack.add(node)
                 stack.append(node)
 
-                # Collect children (only within node_ids)
-                children = [
+                # Collect children (only within node_ids). Sorted: the
+                # engine hands back sets, and set order over str ids
+                # follows PYTHONHASHSEED — an unsorted DFS makes the SCC
+                # result order (hence which sibling loop is reduced
+                # first) vary between processes.
+                children = sorted(
                     s for s in succ_fn(node)
                     if s in node_ids
-                ]
+                )
                 ci = 0
 
             # Process children from where we left off

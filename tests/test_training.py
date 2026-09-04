@@ -255,3 +255,83 @@ def test_pointer_targets_consistent_on_real_streams():
             k = int(name[4:])
             assert (ctx["lpos"][j] - 1) == (ctx["lpos"][t] - 1) - k
             assert k > ctx["klast"][t]          # strictly increasing refs
+
+
+# ── B: legal offsets for the masked vocabulary baseline ──
+
+def test_legal_offsets_contain_every_real_ref_and_match_grammar_in_ref_state():
+    for seed in range(4):
+        mg = _mg_from_seed(seed)
+        max_k = max(1, model_input.max_offset_needed(mg))
+        vocab = model_input.build_vocab(max_k)
+        tokens = model_input.tokenize(mg, vocab)
+        legal = grammar_mask.legal_offsets(tokens, vocab, max_k)
+        names = {i: t for t, i in vocab.items()}
+
+        state = grammar_mask.GrammarState(vocab)
+        for t in range(len(tokens) - 1):
+            nxt = names[tokens[t + 1]]
+            if nxt.startswith("REF_"):
+                assert int(nxt[4:]) in legal[t]
+            # the grammar's own REF set (only non-empty right after KIND/REF)
+            grammar_ks = sorted(int(names[i][4:]) for i in state.allowed_ids()
+                                if names[i].startswith("REF_"))
+            prev = names[tokens[t]]
+            if prev.startswith(("KIND_", "REF_")):
+                assert legal[t] == grammar_ks
+            else:
+                assert grammar_ks == []           # grammar forbids REF here
+            state.push(tokens[t + 1])
+
+
+def test_legal_offsets_respect_window_and_monotone_refs():
+    vocab = model_input.build_vocab(3)
+    names = ["BOS", "KIND_ENTRY", "KIND_LINEAR", "KIND_LINEAR", "KIND_LINEAR",
+             "KIND_MERGE", "REF_1", "REF_2"]
+    ids = [vocab[n] for n in names]
+    legal = grammar_mask.legal_offsets(ids, vocab, max_k=3)
+    assert legal[0] == [] and legal[1] == []          # BOS, first motif
+    assert legal[2] == [1]
+    assert legal[4] == [1, 2, 3]                      # 4 earlier motifs, window 3
+    assert legal[5] == [1, 2, 3]                      # after KIND_MERGE (5th motif)
+    assert legal[6] == [2, 3]                         # after REF_1
+    assert legal[7] == [3]                            # after REF_2
+
+
+def test_prepare_tokens_window_from_train_only(tmp_path):
+    ds = tmp_path / "ds"
+    dataset.build_dataset(
+        ds, {"train": (0, 4), "val": (4, 14), "test": (14, 24)},
+        {"num_nodes": 10, "edge_prob": 0.3}, version="test",
+    )
+    manifest = json.loads((ds / "manifest.json").read_text())
+
+    def needed(split, sid):
+        return model_input.max_offset_needed(
+            store.load_sample(ds / split / f"{sid}.json"))
+
+    train_window = max(needed("train", e["sample_id"])
+                       for e in manifest["splits"]["train"]["samples"])
+
+    out = tmp_path / "tokens"
+    meta = prepare_tokens.prepare(ds, out, window_from="train")
+    assert meta["max_offset"] == max(1, train_window)
+    assert meta["window_from"] == "train"
+
+    for split in ("val", "test"):
+        entries = manifest["splits"][split]["samples"]
+        expect_excluded = sorted(e["seed"] for e in entries
+                                 if needed(split, e["sample_id"]) > meta["max_offset"])
+        got = meta["excluded_over_window"].get(split, {"count": 0, "seeds": []})
+        assert sorted(got["seeds"]) == expect_excluded
+        assert got["count"] == len(expect_excluded)
+        rows = data_utils.read_jsonl(out / f"{split}.jsonl")
+        assert len(rows) == len(entries) - len(expect_excluded)
+        assert meta["splits"][split] == len(rows)
+
+    # default (no window_from) keeps the global window and excludes nothing
+    meta_all = prepare_tokens.prepare(ds, tmp_path / "tokens_all")
+    assert "excluded_over_window" not in meta_all
+    assert meta_all["max_offset"] >= meta["max_offset"]
+    assert sum(meta_all["splits"].values()) == sum(
+        len(v["samples"]) for v in manifest["splits"].values())
