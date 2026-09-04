@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from math import log
 from statistics import mean
 
 from training.analyze_features import spearman
@@ -31,8 +32,9 @@ NLL_THRESHOLD = 0.1
 
 # ── axis computations ────────────────────────
 
-def ref_nll_by_k(token_rows: dict[str, list[int]], scores: list[dict],
-                 vocab: dict[str, int], min_count: int = 10) -> dict[int, float]:
+def ref_buckets(token_rows: dict[str, list[int]], scores: list[dict],
+                vocab: dict[str, int]) -> dict[int, list[float]]:
+    """Scored REF-token NLLs grouped by offset k (sorted by k)."""
     names = {i: t for t, i in vocab.items()}
     buckets: dict[int, list[float]] = {}
     for s in scores:
@@ -41,7 +43,27 @@ def ref_nll_by_k(token_rows: dict[str, list[int]], scores: list[dict],
             name = names[tok]
             if name.startswith("REF_"):
                 buckets.setdefault(int(name[4:]), []).append(nll)
-    return {k: mean(v) for k, v in sorted(buckets.items()) if len(v) >= min_count}
+    return dict(sorted(buckets.items()))
+
+
+def ref_nll_by_k(token_rows: dict[str, list[int]], scores: list[dict],
+                 vocab: dict[str, int], min_count: int = 10) -> dict[int, float]:
+    return {k: mean(v) for k, v in ref_buckets(token_rows, scores, vocab).items()
+            if len(v) >= min_count}
+
+
+def ref_count_by_k(buckets: dict[int, list[float]]) -> dict[int, int]:
+    """How often each k was scored — the frequency confound the NLL-by-k
+    curve must be read against (external review 2026-09-04, 1-4)."""
+    return {k: len(v) for k, v in buckets.items()}
+
+
+def ref_unigram_nll_by_k(buckets: dict[int, list[float]]) -> dict[int, float]:
+    """-log p(k) under the empirical offset distribution of the scored
+    REF tokens: what a frequency-only model pays for each k. NLL(k) minus
+    this is the part a model has to earn by looking at context."""
+    total = sum(len(v) for v in buckets.values())
+    return {k: -log(len(v) / total) for k, v in buckets.items() if v}
 
 
 def feature_rho(features: list[dict], names: list[str],
@@ -90,11 +112,19 @@ def build_report(run_dir: str | Path, dataset_dir: str | Path,
     eval_path = run_dir / "eval.json"
     unconstrained = json.loads(eval_path.read_text()) if eval_path.exists() else None
 
+    buckets = ref_buckets(token_rows, scores, vocab)
+    nll_by_k = ref_nll_by_k(token_rows, scores, vocab)
+    unigram = ref_unigram_nll_by_k(buckets)
+
     return {
         "run": run_dir.name,
         "n_val": len(features),
         "primary": {
-            "ref_nll_by_k": ref_nll_by_k(token_rows, scores, vocab),
+            "ref_nll_by_k": nll_by_k,
+            "ref_count_by_k": ref_count_by_k(buckets),
+            "ref_unigram_nll_by_k": unigram,
+            "ref_nll_minus_unigram_by_k": {
+                k: v - unigram[k] for k, v in nll_by_k.items()},
             "nll_by_offset_bin": nll_by_offset_bin(features),
             "feature_rho": feature_rho(features, PRIMARY_FEATURES),
             "val_nll_per_token": mean(r["nll_per_token"] for r in features),
@@ -155,7 +185,12 @@ def compare(before: dict, after: dict) -> list[dict]:
 def print_report(rep: dict) -> None:
     p = rep["primary"]
     print(f"# {rep['run']}  (val n={rep['n_val']}, val NLL/token {p['val_nll_per_token']:.3f})")
-    print("REF NLL by k: " + "  ".join(f"k{k}:{v:.2f}" for k, v in p["ref_nll_by_k"].items()))
+    counts = p.get("ref_count_by_k", {})
+    unigram = p.get("ref_unigram_nll_by_k", {})
+    print("REF NLL by k (n, -log p(k)): " + "  ".join(
+        f"k{k}:{v:.2f} (n={counts.get(k, counts.get(str(k), '?'))}, "
+        f"{unigram.get(k, unigram.get(str(k), float('nan'))):.2f})"
+        for k, v in p["ref_nll_by_k"].items()))
     print("NLL by mean_offset bin: " + "  ".join(
         f"[{b['mean_offset_range'][0]}-{b['mean_offset_range'][1]}]:{b['mean_nll_per_token']:.3f}"
         for b in p["nll_by_offset_bin"]))

@@ -145,3 +145,65 @@ def test_cli_builds_dataset(tmp_path, capsys):
         "name": GENERATOR_NAME, "version": "test", "config": CONFIG,
     }
     assert "train: kept" in capsys.readouterr().out
+
+
+# ── external review 2026-09-04: identity fixes ──
+
+def test_isolated_nodes_count_toward_identity():
+    edges = [("A", "B")]
+    with_isolated = ["A", "B", "C"]
+    plain = ["A", "B"]
+
+    # edges-only identity (legacy call) cannot see the isolated node
+    assert dataset.is_structural_duplicate(edges, edges)
+    # node-aware identity distinguishes the two graphs
+    assert dataset.fingerprint(edges, with_isolated) != dataset.fingerprint(edges, plain)
+    assert not dataset.is_structural_duplicate(edges, edges, with_isolated, plain)
+    assert dataset.is_structural_duplicate(edges, edges, with_isolated, with_isolated)
+
+
+def test_cfg_nodes_snapshot_includes_isolated_nodes():
+    engine = GraphEngine()
+    for n in ("A", "B", "Z"):
+        engine.add_node(n)
+    engine.add_edge("A", "B")
+    assert dataset.cfg_nodes(engine) == ["A", "B", "Z"]
+    assert dataset.cfg_edges(engine) == [("A", "B")]
+
+
+def test_generator_descriptor_name_is_recorded(tmp_path):
+    desc = dataset.GeneratorDescriptor("const_chain", _constant_generator)
+    manifest = dataset.build_dataset(
+        tmp_path / "ds", {"train": (0, 1)}, CONFIG, version="test", generator=desc,
+    )
+    assert manifest["generator"]["name"] == "const_chain"
+    sid = manifest["splits"]["train"]["samples"][0]["sample_id"]
+    payload = json.loads((tmp_path / "ds" / "train" / f"{sid}.json").read_text())
+    assert payload["provenance"]["generator"]["name"] == "const_chain"
+
+    # a bare callable is named after the function, never after the default
+    manifest2 = dataset.build_dataset(
+        tmp_path / "ds2", {"train": (0, 1)}, CONFIG, version="test",
+        generator=_constant_generator,
+    )
+    assert manifest2["generator"]["name"] == "_constant_generator"
+    assert manifest2["generator"]["name"] != GENERATOR_NAME
+    # different generator identity -> different sample_id for the same seed
+    assert manifest2["splits"]["train"]["samples"][0]["sample_id"] != sid
+
+
+def test_manifest_records_code_state(tmp_path):
+    manifest = dataset.build_dataset(
+        tmp_path / "ds", {"train": (0, 2)}, CONFIG, version="test",
+        code={"commit": "abc1234", "dirty": True},
+    )
+    assert manifest["code"] == {"commit": "abc1234", "dirty": True}
+
+    plain = dataset.build_dataset(
+        tmp_path / "ds2", {"train": (0, 2)}, CONFIG, version="test",
+    )
+    assert "code" not in plain
+
+    state = dataset._git_state()
+    assert set(state) == {"commit", "dirty"}
+    assert isinstance(state["commit"], str) and isinstance(state["dirty"], bool)

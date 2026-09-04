@@ -1,5 +1,9 @@
 """eval_axes: REF-by-k aggregation and the record-then-verify flags."""
 
+import math
+
+import pytest
+
 from cfg_reducer import model_input
 from training import eval_axes
 
@@ -82,3 +86,19 @@ def test_sketch_features_and_ks():
     # malformed streams are dropped, not counted
     rows = sketch_stats.features_of_streams([tokens, tokens[:-1]], vocab)
     assert len(rows) == 1
+
+
+def test_ref_counts_and_unigram_baseline_by_k():
+    vocab = model_input.build_vocab(3)
+    names = ["BOS", "KIND_ENTRY", "KIND_LINEAR", "REF_1", "KIND_MERGE", "REF_1",
+             "REF_2", "KIND_LINEAR", "REF_1", "EOS"]
+    tokens = [vocab[n] for n in names]
+    token_nll = [0.5] * (len(tokens) - 1)
+    buckets = eval_axes.ref_buckets({"s": tokens},
+                                    [{"sample_id": "s", "token_nll": token_nll}], vocab)
+    assert eval_axes.ref_count_by_k(buckets) == {1: 3, 2: 1}
+    unigram = eval_axes.ref_unigram_nll_by_k(buckets)
+    assert unigram[1] == pytest.approx(-math.log(0.75))
+    assert unigram[2] == pytest.approx(-math.log(0.25))
+    # rarer k always pays more under the frequency-only model
+    assert unigram[2] > unigram[1]

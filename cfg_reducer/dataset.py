@@ -12,6 +12,7 @@ import argparse
 import json
 import subprocess
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -27,6 +28,32 @@ from .types import MetaGraph
 Generator = Callable[..., list[str]]
 
 
+@dataclass(frozen=True)
+class GeneratorDescriptor:
+    """
+    Identity of a CFG generator as recorded in provenance and manifest.
+    Different generator families must never share a name, or their
+    samples become indistinguishable in provenance (external review
+    2026-09-04, 1-5).
+
+    name  stable id written to provenance.generator.name
+    fn    generator(engine, *, seed=..., **config) -> node ids
+    """
+    name: str
+    fn: Generator
+
+
+DEFAULT_GENERATOR = GeneratorDescriptor(GENERATOR_NAME, generate_cfg)
+
+
+def _as_descriptor(generator: Generator | GeneratorDescriptor
+                   ) -> GeneratorDescriptor:
+    if isinstance(generator, GeneratorDescriptor):
+        return generator
+    return GeneratorDescriptor(getattr(generator, "__name__", "generator"),
+                               generator)
+
+
 # ── pipeline helpers ─────────────────────────
 
 def cfg_edges(engine: GraphEngine) -> list[tuple[str, str]]:
@@ -36,6 +63,11 @@ def cfg_edges(engine: GraphEngine) -> list[tuple[str, str]]:
         for src in engine.node_ids()
         for dst in engine.successors(src)
     )
+
+
+def cfg_nodes(engine: GraphEngine) -> list[str]:
+    """Snapshot the node set; isolated nodes are part of the identity."""
+    return sorted(engine.node_ids())
 
 
 def reduce_to_metagraph(engine: GraphEngine) -> MetaGraph:
@@ -52,25 +84,34 @@ def reduce_to_metagraph(engine: GraphEngine) -> MetaGraph:
 # the full identity.  When node types diversify, pass node attributes
 # to both the hash (node_attr) and the matcher (node_match).
 
-def _digraph(edges: list[tuple[str, str]]) -> nx.DiGraph:
+def _digraph(edges: list[tuple[str, str]],
+             nodes: list[str] | None = None) -> nx.DiGraph:
+    """Build the identity graph. Pass nodes so that isolated nodes count;
+    edges alone silently drop them (external review 2026-09-04, 1-6)."""
     graph = nx.DiGraph()
+    if nodes is not None:
+        graph.add_nodes_from(nodes)
     graph.add_edges_from(edges)
     return graph
 
 
-def fingerprint(edges: list[tuple[str, str]]) -> str:
+def fingerprint(edges: list[tuple[str, str]],
+                nodes: list[str] | None = None) -> str:
     """WL hash for candidate bucketing — never proof of isomorphism."""
     with warnings.catch_warnings():
         # nx >= 3.5 emits hash-change notices for attribute-less graphs
         warnings.simplefilter("ignore", UserWarning)
-        return nx.weisfeiler_lehman_graph_hash(_digraph(edges), iterations=3)
+        return nx.weisfeiler_lehman_graph_hash(_digraph(edges, nodes),
+                                               iterations=3)
 
 
 def is_structural_duplicate(
     edges_a: list[tuple[str, str]], edges_b: list[tuple[str, str]],
+    nodes_a: list[str] | None = None, nodes_b: list[str] | None = None,
 ) -> bool:
     """Confirm directed isomorphism between two candidate CFGs."""
-    return nx.is_isomorphic(_digraph(edges_a), _digraph(edges_b))
+    return nx.is_isomorphic(_digraph(edges_a, nodes_a),
+                            _digraph(edges_b, nodes_b))
 
 
 # ── dataset builder ──────────────────────────
@@ -92,7 +133,8 @@ def build_dataset(
     splits: dict[str, tuple[int, int]],
     config: dict,
     version: str,
-    generator: Generator = generate_cfg,
+    generator: Generator | GeneratorDescriptor = DEFAULT_GENERATOR,
+    code: dict | None = None,
 ) -> dict:
     """
     Generate one sample per seed, drop structural duplicates across the
@@ -100,13 +142,17 @@ def build_dataset(
     and write out/<split>/<sample_id>.json plus out/manifest.json.
 
     config must be exactly the generator's keyword arguments (it is
-    recorded verbatim in each sample's provenance).
+    recorded verbatim in each sample's provenance). A bare callable is
+    wrapped into a GeneratorDescriptor named after the function; code
+    (e.g. {"commit", "dirty"} from the CLI) is recorded in the manifest
+    only, so sample_ids stay a function of the generator identity.
     """
     _validate_splits(splits)
+    desc = _as_descriptor(generator)
     out = Path(out_dir)
 
-    # fingerprint -> [(edges, sample_id)] across every split
-    seen: dict[str, list[tuple[list[tuple[str, str]], str]]] = {}
+    # fingerprint -> [(nodes, edges, sample_id)] across every split
+    seen: dict[str, list[tuple[list[str], list[tuple[str, str]], str]]] = {}
     manifest_splits: dict[str, dict] = {}
 
     for split_name, (start, stop) in splits.items():
@@ -117,13 +163,14 @@ def build_dataset(
 
         for seed in range(start, stop):
             engine = GraphEngine()
-            generator(engine, seed=seed, **config)
-            edges = cfg_edges(engine)
+            desc.fn(engine, seed=seed, **config)
+            nodes, edges = cfg_nodes(engine), cfg_edges(engine)
 
-            fp = fingerprint(edges)
+            fp = fingerprint(edges, nodes)
             duplicate_of = next(
-                (sid for prev_edges, sid in seen.get(fp, [])
-                 if is_structural_duplicate(edges, prev_edges)),
+                (sid for prev_nodes, prev_edges, sid in seen.get(fp, [])
+                 if is_structural_duplicate(edges, prev_edges,
+                                            nodes, prev_nodes)),
                 None,
             )
             if duplicate_of is not None:
@@ -133,7 +180,7 @@ def build_dataset(
             provenance = {
                 "source": "synthetic",
                 "generator": {
-                    "name": GENERATOR_NAME,
+                    "name": desc.name,
                     "version": version,
                     "seed": seed,
                     "config": config,
@@ -145,7 +192,7 @@ def build_dataset(
                 mg, provenance, split_dir / f"{sample_id}.json", sample_id
             )
 
-            seen.setdefault(fp, []).append((edges, sample_id))
+            seen.setdefault(fp, []).append((nodes, edges, sample_id))
             kept.append({"seed": seed, "sample_id": sample_id})
 
         manifest_splits[split_name] = {
@@ -159,10 +206,12 @@ def build_dataset(
     manifest = {
         "schema_version": store.SCHEMA_VERSION,
         "generator": {
-            "name": GENERATOR_NAME, "version": version, "config": config,
+            "name": desc.name, "version": version, "config": config,
         },
         "splits": manifest_splits,
     }
+    if code is not None:
+        manifest["code"] = code
     (out / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -172,15 +221,25 @@ def build_dataset(
 
 # ── CLI ──────────────────────────────────────
 
-def _git_version() -> str:
+def _git(*args: str) -> str | None:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, check=True,
+            ["git", *args], capture_output=True, text=True, check=True,
         )
         return result.stdout.strip()
     except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+        return None
+
+
+def _git_state() -> dict:
+    """{"commit": short hash, "dirty": bool} of the working tree, so a
+    manifest built from uncommitted generator code is recognisable."""
+    commit = _git("rev-parse", "--short", "HEAD")
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "commit": commit or "unknown",
+        "dirty": bool(status) if status is not None else True,
+    }
 
 
 def _parse_split(text: str) -> tuple[str, tuple[int, int]]:
@@ -213,8 +272,10 @@ def main(argv: list[str] | None = None) -> None:
 
     splits = dict(_parse_split(s) for s in args.split)
     config = {"num_nodes": args.num_nodes, "edge_prob": args.edge_prob}
+    state = _git_state()
     manifest = build_dataset(
-        args.out, splits, config, args.version or _git_version()
+        args.out, splits, config, args.version or state["commit"],
+        code=state,
     )
     for name, info in manifest["splits"].items():
         print(
