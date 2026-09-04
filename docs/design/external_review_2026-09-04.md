@@ -2,7 +2,7 @@
 
 作成日: 2026-09-04
 対象: PR #3 コメント「メモ: 外部での会話まとめ」(head `c2855c3` に対する静的レビュー)
-状態: **照合済み・判断待ち**(§4)
+状態: **決定済み(§5)・A 実施中**
 
 レビューの指摘をコードと PR の状態に照合し、(A) 本 PR で閉じるもの、
 (B) 次 PR の対照実験、(C) その後の生成器 v2、(D) 保留 — に分類した。
@@ -114,3 +114,20 @@
 | Q6-5 | B の規模 | 3 構成 × 3 seed × 2 サイズ = 18 run から開始。結果次第で 5 構成 / 5 seed へ拡張 |
 | Q6-6 | 窓なし pointer(B-7)の位置 | B の最後に実装し、ID セルで案 2″ と同等を確認してから C へ |
 | Q6-7 | Session 3 の GT 設計との接続 | AR baseline の知見(難度 = 参照距離、pointer 化で解消)を GT 側の生成文法(`ATTACH_EXISTING` = pointer)へ引き継ぐ方針のみ確認したい。本シリーズでは扱わない |
+
+## 5. 決定(2026-09-04、A6)
+
+| # | 決定 | 反映 |
+|---|---|---|
+| A6-1 | main を merge、競合は本ブランチ優先 | `2a3e9db`(main の追加テスト 4 本は `generate_cfg` 経由で取り込み) |
+| A6-2 | A は本 PR、B・C は別 PR に分割 | 本文書 §3 の区分どおり |
+| A6-3 | 案 2″ は「暫定第一候補」。成績と工夫は評価する | `representation_experiments.md` 結論を改稿 |
+| A6-4 | GitHub Actions は**延期** | A-5 は保留 |
+| A6-5 | B は 3 構成 × 3 seed × 2 サイズ = 18 run | 次 PR |
+| A6-6 | 窓なし pointer(B-7)は **C へ** | offset OOD セルと同時に実装 |
+| A6-7 | Session 3 の GT 設計との接点は Issue にメモとして残す | Issue 参照は PR コメントに記載 |
+
+A の実施記録: A-1 merge、A-3 generator descriptor + nodes 込み同一性 + manifest `code`、
+A-6 NLL-by-k の件数・−log p(k) 併記(副産物: `structure_sweep.md` 追記の頻度交絡)、
+A-2 文書是正(本節・`representation_experiments.md`・`eval_axes.md`・`structure_sweep.md`・
+`dataset_generation.md`)、A-4 PR 本文更新。

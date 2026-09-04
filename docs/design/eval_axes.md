@@ -15,10 +15,21 @@ pass/fail として扱うのは末尾の不変条件だけ。
 
 | 軸 | 内容 | 期待 |
 |---|---|---|
-| REF NLL-by-k | 参照距離 k ごとの REF トークン平均 NLL(teacher-forced, val) | 曲線が平坦化・低下 |
+| REF NLL-by-k | 参照距離 k ごとの REF トークン平均 NLL(teacher-forced, val)。件数 n と経験頻度の −log p(k) を併記(2026-09-04) | 曲線が平坦化・低下(−log p(k) との差で読む) |
 | NLL by mean_offset bin | val を平均参照距離の 3 分位に分け、各 bin の NLL/token | 高 offset bin の低下 |
 | primary ρ | `mean_offset` / `max_offset` / `max_width` と NLL の Spearman | 低下(距離依存の解消) |
-| 非制約 WF・違反プロファイル | 400 本の文法通過率と違反カテゴリ内訳 | WF 上昇、`ref_out_of_range` 減 |
+| WF・違反プロファイル | 400 本の文法通過率と違反カテゴリ内訳。名称は下の 3 種を区別する | WF 上昇、`ref_out_of_range` 減 |
+
+### WF の 3 名称(2026-09-04、外部レビュー 1-2)
+
+| 名称 | 生成時のマスク | 該当 |
+|---|---|---|
+| raw WF | なし | baseline・案 1・案 2 の「非制約」 |
+| reference-constrained WF | 参照だけ合法化(合法候補集合 + 候補ゼロ時の REF 種別マスク) | 案 2′ 以降 `--pointer-legal` の「非制約」 |
+| fully-constrained WF | 括弧を含む全文法(`--constrained`) | 全構成の制約デコード(常に 100%) |
+
+raw と reference-constrained は同条件ではない。pointer の学習能力を制約の効果と
+分離するには、baseline に同じ参照合法マスクを掛けた対照が必要(次 PR)。
 
 ## canary(動いてはいけないもの)
 

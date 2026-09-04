@@ -27,6 +27,7 @@ manifest:
 {
   "schema_version": 1,
   "generator": {"name": "generate_cfg", "version": "<git commit>", "config": {...}},
+  "code": {"commit": "<git commit>", "dirty": false},   ← CLI 実行時のみ
   "splits": {
     "train": {
       "seed_range": [0, 800],
@@ -73,3 +74,17 @@ uv run python -m cfg_reducer.dataset \
 seed 列挙ではなく provenance group(repository/file/function)単位の分離が
 必要なため、別の loader 関数として実装し、重複排除
 (`fingerprint` / `is_structural_duplicate`)と `store.save_sample` を共有する。
+
+## 追記(2026-09-04、外部レビュー 1-5 / 1-6)
+
+- **generator の同一性**: `build_dataset(generator=...)` は `GeneratorDescriptor(name, fn)`
+  を受け取り、provenance と manifest の `generator.name` に **実際に走った生成器の名前**
+  を記録する(以前は固定の `GENERATOR_NAME`)。素の callable を渡した場合は関数名で
+  包む。生成器 family を増やしても異なる生成器が同名で記録されることはない。
+  `sample_id` は provenance 由来なので、生成器名が変われば同 seed でも別 id になる。
+- **コード状態**: CLI は manifest に `code: {commit, dirty}` を記録する(provenance
+  には入れない。sample_id を生成器の同一性だけの関数に保つため)。dirty な作業木から
+  作った dataset を後から見分けられる。
+- **同一性のノード集合**: 重複判定の `DiGraph` を edge だけでなく node 集合からも構築
+  し、孤立ノードを同一性に含める(`cfg_nodes()`)。現生成器は線形骨格を先に張るため
+  孤立ノードは出ないが、family 追加前の前提整備。
