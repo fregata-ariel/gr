@@ -2,7 +2,7 @@
 
 作成日: 2026-09-04
 対象: PR #3 コメント「メモ: 外部での会話まとめ」(head `c2855c3` に対する静的レビュー)
-状態: **決定済み(§5)・A 実施中**
+状態: **決定済み(§5)・A 完了・B 完了**(結果は `controlled_eval.md`)
 
 レビューの指摘をコードと PR の状態に照合し、(A) 本 PR で閉じるもの、
 (B) 次 PR の対照実験、(C) その後の生成器 v2、(D) 保留 — に分類した。
@@ -131,3 +131,10 @@ A の実施記録: A-1 merge、A-3 generator descriptor + nodes 込み同一性 
 A-6 NLL-by-k の件数・−log p(k) 併記(副産物: `structure_sweep.md` 追記の頻度交絡)、
 A-2 文書是正(本節・`representation_experiments.md`・`eval_axes.md`・`structure_sweep.md`・
 `dataset_generation.md`)、A-4 PR 本文更新。
+
+## 6. B の結果(2026-09-04)
+
+18 run(base / mask / ptr × 3 seed × n24 / n32)の判定: **案 2″ の改善は参照合法マスク
+で説明でき、pointer 機構の寄与は帰属できない**(レビュー §2 の懸念どおり)。既定構成は
+baseline + 参照合法マスク。「難度 = k の関数」は頻度交絡(§1-4)が主因と確認。
+詳細と表は `docs/design/controlled_eval.md`。
