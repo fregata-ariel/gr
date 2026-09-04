@@ -50,7 +50,8 @@ def test_ref_records_capture_k_n_legal_rel_and_edge_correctness():
     tokens = _stream(vocab, names)
     # targets are tokens[1:]; REF_1 is target index 4, REF_3 is index 5
     score = {"sample_id": "s", "token_nll": [0.1] * 4 + [0.5, 1.5, 0.2],
-             "ref_pos": [4, 5], "ref_k": [1, 3], "ref_correct": [1, 0]}
+             "ref_pos": [4, 5], "ref_k": [1, 3], "ref_correct": [1, 0],
+             "ref_type_nll": [0.1, 0.5]}
     recs = ce.ref_records({"s": tokens}, [score], vocab, max_k=3)
     assert [r["k"] for r in recs] == [1, 3]
     # after KIND_MERGE (4th motif): 3 earlier motifs, window 3 -> 3 legal
@@ -59,6 +60,13 @@ def test_ref_records_capture_k_n_legal_rel_and_edge_correctness():
     assert recs[1]["n_legal"] == 2 and recs[1]["rel"] == 2
     assert [r["correct"] for r in recs] == [1, 0]
     assert [r["nll"] for r in recs] == [0.5, 1.5]
+    assert [r["offset_nll"] for r in recs] == pytest.approx([0.4, 1.0])
+    assert ce.offset_by_k(recs, min_count=1) == {1: {"n": 1, "mean": pytest.approx(0.4)},
+                                                 3: {"n": 1, "mean": pytest.approx(1.0)}}
+    # score files without ref_type_nll degrade gracefully
+    bare = ce.ref_records({"s": tokens}, [{k: v for k, v in score.items() if k != "ref_type_nll"}],
+                          vocab, max_k=3)
+    assert all(r["offset_nll"] is None for r in bare) and ce.offset_by_k(bare) == {}
 
     acc = ce.edge_accuracy(recs)
     assert acc["overall"] == 0.5 and acc["n"] == 2

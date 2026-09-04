@@ -390,7 +390,7 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
         if model.use_pointer:
             type_of = torch.tensor(vc.type_of, device=device)
             acc = float(model.type_head(hidden)[0].argmax(-1).eq(type_of[targets]).float().mean())
-            ref_correct = _pointer_ref_correct(model, hidden, batch, vc, ref_pos)
+            ref_correct, ref_type_nll = _pointer_ref_stats(model, hidden, batch, vc, ref_pos)
         else:
             logits = model.head(hidden)[0]
             if model.ref_legal_mask:
@@ -401,19 +401,26 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
                                      device=device)
             pred_k = logits[:, ref_index].argmax(-1) + 1
             ref_correct = [int(int(pred_k[t]) == k) for t, k in zip(ref_pos, ref_k)]
+            # log P(any REF) = logsumexp over REF_k: the type cost inside NLL(REF_k)
+            type_lp = torch.logsumexp(torch.log_softmax(logits, -1)[:, ref_index], -1)
+            ref_type_nll = [round(-float(type_lp[t]), 4) for t in ref_pos]
         scored.append({
             "sample_id": row.get("sample_id"), "seed": row.get("seed"),
             "n_tokens": n_tokens, "nll": nll, "nll_per_token": nll / n_tokens,
             "acc": acc, "token_nll": [round(x, 4) for x in token_nll],
             # edge accuracy: at REF targets, did the argmax reference match?
+            # ref_type_nll: -log P(REF type) there, so NLL(REF_k) - ref_type_nll
+            # is the offset-only cost comparable to a frequency prior over k
             "ref_pos": ref_pos, "ref_k": ref_k, "ref_correct": ref_correct,
+            "ref_type_nll": ref_type_nll,
         })
     return scored
 
 
-def _pointer_ref_correct(model, hidden, batch, vc: Vocab, ref_pos):
+def _pointer_ref_stats(model, hidden, batch, vc: Vocab, ref_pos):
+    """(ref_correct, ref_type_nll) at REF targets for the pointer model."""
     if not ref_pos:
-        return []
+        return [], []
     plpos = batch["plpos"][:, :-1]
     cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
                           plpos, vc.max_k,
@@ -421,7 +428,15 @@ def _pointer_ref_correct(model, hidden, batch, vc: Vocab, ref_pos):
     scores = model.pointer_scores(hidden, cand, pointer_dist(plpos))[0]
     target = batch["ref_target"][0, :-1]
     pred = scores.argmax(-1)
-    return [int(int(pred[t]) == int(target[t])) for t in ref_pos]
+    type_logits = model.type_head(hidden)[0]
+    if model.pointer_legal:                  # same REF-type mask as token_logprobs
+        no_cand = ~cand[0].any(-1)
+        type_logits = type_logits.masked_fill(
+            no_cand.unsqueeze(-1) & (torch.arange(type_logits.size(-1), device=hidden.device) == vc.ref_type),
+            NEG)
+    type_lp = torch.log_softmax(type_logits, -1)[:, vc.ref_type]
+    return ([int(int(pred[t]) == int(target[t])) for t in ref_pos],
+            [round(-float(type_lp[t]), 4) for t in ref_pos])
 
 
 # ── sampling ─────────────────────────────────

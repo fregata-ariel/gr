@@ -91,6 +91,7 @@ def ref_records(token_rows: dict[str, list[int]], scores: list[dict],
         tokens = token_rows[s["sample_id"]]
         ctx = grammar_mask.pointer_context(tokens, vocab)
         correct = dict(zip(s.get("ref_pos", []), s.get("ref_correct", [])))
+        type_nll = dict(zip(s.get("ref_pos", []), s.get("ref_type_nll", [])))
         for t, (tok, nll) in enumerate(zip(tokens[1:], s["token_nll"])):
             name = names[tok]
             if not name.startswith("REF_"):
@@ -99,8 +100,21 @@ def ref_records(token_rows: dict[str, list[int]], scores: list[dict],
             klast = ctx["klast"][t]
             n_legal = max(0, min(max_k, ctx["lpos"][t] - 1) - klast)
             out.append({"k": k, "nll": nll, "n_legal": n_legal,
-                        "rel": k - klast, "correct": correct.get(t)})
+                        "rel": k - klast, "correct": correct.get(t),
+                        "offset_nll": (nll - type_nll[t]) if t in type_nll else None})
     return out
+
+
+def offset_by_k(records: list[dict], min_count: int = MIN_COUNT) -> dict[int, dict]:
+    """Offset-only REF NLL by k (NLL(REF_k) minus the REF-type cost) — the
+    quantity a frequency prior over k competes with. Empty when the score
+    file lacks ref_type_nll."""
+    buckets: dict[int, list[float]] = {}
+    for r in records:
+        if r["offset_nll"] is not None:
+            buckets.setdefault(r["k"], []).append(r["offset_nll"])
+    return {k: {"n": len(v), "mean": mean(v)} for k, v in sorted(buckets.items())
+            if len(v) >= min_count}
 
 
 def by_k(records: list[dict], min_count: int = MIN_COUNT) -> dict[int, dict]:
@@ -217,6 +231,7 @@ def evaluate_run(run_dir: Path, token_rows: dict[str, list[int]],
                                / sum(r["n_tokens"] for r in scores)),
         "test_nll_per_sample_mean": mean(r["nll_per_token"] for r in scores),
         "ref_nll_by_k": table,
+        "ref_offset_nll_by_k": offset_by_k(recs),
         "ref_nll_macro_micro": macro_micro(table),
         "edge_accuracy": edge_accuracy(recs),
         "within_n_legal": within_n_legal(recs),
@@ -304,11 +319,16 @@ def print_summary(rep: dict) -> None:
     for config, by_seed in rep["runs"].items():
         first = by_seed[min(by_seed)]
         fb = first["frequency_baselines"]
-        print(f"  {config} seed {min(by_seed)} REF NLL by k (n | model | unigram | conditional):")
+        off = first.get("ref_offset_nll_by_k", {})
+        print(f"  {config} seed {min(by_seed)} REF NLL by k "
+              f"(n | model | offset-only | unigram | conditional):")
         for k, v in first["ref_nll_by_k"].items():
             if v["n"] >= MIN_COUNT:
+                o = off.get(k, {}).get("mean")
                 print(f"    k{k}: n={v['n']:4d}  {v['mean']:.2f}  "
-                      f"{fb['unigram_nll_by_k'].get(k, float('nan')):.2f}  "
+                      f"{o:.2f}  " if o is not None else
+                      f"    k{k}: n={v['n']:4d}  {v['mean']:.2f}  n/a   ", end="")
+                print(f"{fb['unigram_nll_by_k'].get(k, float('nan')):.2f}  "
                       f"{fb['conditional_nll_by_k'].get(k, float('nan')):.2f}")
 
 
