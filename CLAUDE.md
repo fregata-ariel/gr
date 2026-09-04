@@ -8,16 +8,24 @@ for downstream CFG generation via Graph Transformers.
 
 ```
 cfg_reducer/
-  types.py       — Pure data: NodeType, Op, Motif (frozen dataclasses)
+  types.py       — Pure data: NodeType, Op, Motif, MetaGraph
   engine.py      — GraphEngine: node/edge mutation with Op-based undo/redo
   algorithm.py   — ReductionAlgorithm: two-phase (terminal removal + SCC cycle breaking)
                    Scope enter/leave, tarjan_scc()
   motif.py       — Motif extraction from Op history (reverse replay)
                    Hierarchical: Loop Motifs are containers with children
-  store.py       — JSON serialization/deserialization of Op history
+  metagraph.py   — Hierarchical Motif trees to dependency DAGs
+  store.py       — JSON serialization/deserialization of Op history and
+                   MetaGraph samples (docs/design/metagraph_schema.md)
+  generate.py    — Pure synthetic CFG generator (no matplotlib)
+  dataset.py     — Batch dataset builder + CLI: splits, iso-dedup, manifest
+  model_input.py — Flatten + tokenize for the AR baseline (topology-only view)
   __init__.py    — Public API re-exports
-main.py          — Interactive matplotlib visualizer with build_cfg()
+main.py          — Interactive matplotlib visualizer (imports generate_cfg)
+training/        — AR baseline: local tokenize/eval (cfg_reducer, no torch),
+                   Colab trainer train_ar.py (torch only, single file)
 docs/            — Discussion logs and design notes
+tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
 
 ## Key Concepts
@@ -36,6 +44,11 @@ docs/            — Discussion logs and design notes
 - Data types are frozen dataclasses in types.py — keep them serialization-friendly.
 - No runtime dependencies beyond matplotlib and networkx.
 - Type checker: `ty` (in dev dependencies).
+
+## Handoff
+
+Read `docs/handoff.md` for the current branch state, required reading order,
+MetaGraph invariants, verification commands, and open design decisions.
 
 ## Companion Project
 

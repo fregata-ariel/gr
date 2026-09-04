@@ -1,5 +1,9 @@
 # MetaGraph Implementation Plan
 
+> **Historical note (2026-08-28):** Step 2 の擬似コードの `succs` 方向は
+> 現行実装・テストと異なる。現行仕様は `docs/handoff.md` の
+> 「MetaGraph の不変条件」と `cfg_reducer/metagraph.py` を参照すること。
+
 ## Goal
 
 Add a `MetaGraph` data type and `build()` function that converts a hierarchical

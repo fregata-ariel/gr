@@ -1,5 +1,5 @@
 from cfg_reducer import GraphEngine, MetaGraph, ReductionAlgorithm, motif, metagraph
-from main import build_cfg
+from cfg_reducer.generate import generate_cfg
 
 
 def _build_graph(edges: list[tuple[str, str]]) -> GraphEngine:
@@ -88,8 +88,9 @@ def test_dag_invariant():
         assert src < dst
 
 
-def test_build_cfg_integration():
-    engine = build_cfg()
+def test_generate_cfg_integration():
+    engine = GraphEngine()
+    generate_cfg(engine)          # main.py's build_cfg, now in cfg_reducer.generate
     algorithm = ReductionAlgorithm(engine)
 
     while algorithm.step() is not None:
