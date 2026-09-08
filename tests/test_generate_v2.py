@@ -1,15 +1,22 @@
 """Layered v1 compatibility and dataset integration."""
 
+from collections import Counter
 import json
 import os
 from pathlib import Path
 from random import Random
+import subprocess
+import sys
 
 import pytest
 
 from cfg_reducer import GraphEngine
 from cfg_reducer.dataset import build_dataset, cfg_edges, cfg_nodes, reduce_to_metagraph
 from cfg_reducer.families.layered import Layered, _choose_target
+from cfg_reducer.families.structured import (
+    GenerationRejected, Structured, lower_structure, pad_shape, plan_structure,
+)
+from cfg_reducer.reducibility import is_reducible
 from cfg_reducer.generate import generate_cfg
 from cfg_reducer.generate_v2 import (
     descriptor_for, generate_cfg_v2, normalize_spec, spec_to_json,
@@ -145,3 +152,122 @@ def test_layered_dataset_descriptor(tmp_path: Path) -> None:
     assert descriptor.fn(replay, seed=7, **generator["config"]) == generate_cfg_v2(
         direct, seed=7, spec=spec)
     assert cfg_edges(replay) == cfg_edges(direct)
+
+
+@pytest.mark.parametrize('n', [12, 24, 48])
+def test_structured_reducible_many_seeds(n: int) -> None:
+    successes = rejected = 0
+    for seed in range(500 if _SLOW else 100):
+        spec = GeneratorSpec('structured', n, {
+            'loop_count': 2, 'goto_count': 1, 'merge_degree': 2,
+            'branch_degree': 4, 'max_layer_width': 4,
+            'span_mode': ('short', 'long', 'uniform')[seed % 3]})
+        try:
+            shape = Structured().generate(spec, Random(seed))
+        except GenerationRejected as exc:
+            assert exc.reason == 'node_budget'
+            with pytest.raises(GenerationRejected):
+                Structured().generate(spec, Random(seed))
+            rejected += 1
+            continue
+        successes += 1
+        assert is_reducible(shape.nodes, shape.edges, entry=shape.nodes[0])
+        assert len(shape.edges) == len(set(shape.edges))
+        assert shape == Structured().generate(spec, Random(seed))
+        assert (9*n+9)//10 <= len(shape.nodes) <= 11*n//10
+        assert max(Counter(v for _, v in shape.edges).values()) <= 2
+    assert successes > 0
+    print(f'n={n}: successes={successes}, GenerationRejected={rejected}')
+
+
+@pytest.mark.parametrize('mode', ['short', 'long', 'uniform'])
+@pytest.mark.parametrize('merge', [2, 3, 4])
+def test_node_budget(mode: str, merge: int) -> None:
+    for seed in range(5):
+        spec = GeneratorSpec('structured', 24, {'merge_degree': merge, 'span_mode': mode})
+        before = lower_structure(plan_structure(spec, Random(seed)), merge)
+        after = pad_shape(before, 26, mode, Random(seed))
+        for shape in (before, after, Structured().generate(spec, Random(seed))):
+            assert is_reducible(shape.nodes, shape.edges, entry=shape.entry)
+            assert max(Counter(v for _, v in shape.edges).values()) <= merge
+            assert len(set(shape.edges)) == len(shape.edges)
+        assert len(after.nodes) == 26
+        assert len(after.edges) - len(before.edges) == 26 - len(before.nodes)
+
+
+def test_structured_rejection_and_serial() -> None:
+    # The lower bound passes, but sequential loops and join routers may exceed it.
+    spec = GeneratorSpec('structured', 10, {'merge_degree': 2})
+    rejected = successes = 0
+    for seed in range(30):
+        try:
+            Structured().generate(spec, Random(seed))
+            successes += 1
+        except GenerationRejected as exc:
+            assert str(exc) == exc.reason == 'node_budget'
+            rejected += 1
+    assert rejected and successes
+    for n in (3, 12):
+        shape = Structured().generate(GeneratorSpec('structured', n, {
+            'max_layer_width': 1, 'loop_count': 0, 'goto_count': 0}), Random(0))
+        assert shape.edges == tuple(zip(shape.nodes, shape.nodes[1:]))
+
+
+def test_structured_hashseed() -> None:
+    script = '''
+import json
+from dataclasses import asdict
+from random import Random
+from cfg_reducer.families.structured import Structured
+from cfg_reducer.generator_types import GeneratorSpec
+print(json.dumps([asdict(Structured().generate(GeneratorSpec('structured', 24,
+    {'span_mode': mode, 'branch_degree': 4, 'max_layer_width': 4}), Random(seed)))
+    for mode in ('short', 'long', 'uniform') for seed in range(3)], sort_keys=True))
+'''
+    outputs = [subprocess.check_output([sys.executable, '-c', script],
+               env=os.environ | {'PYTHONHASHSEED': value}) for value in ('1', '77')]
+    assert outputs[0] == outputs[1]
+
+
+def test_structured_dataset_descriptor(tmp_path: Path) -> None:
+    spec = GeneratorSpec('structured', 12)
+    config = {'spec': spec_to_json(normalize_spec(spec))}
+    descriptor = descriptor_for(spec)
+    manifest = build_dataset(tmp_path, {'test': (7, 8)}, config,
+                             'test-structured', generator=descriptor)
+    samples = manifest['splits']['test']['samples']
+    assert len(samples) == 1
+    payload = json.loads((tmp_path / 'test' / f"{samples[0]['sample_id']}.json").read_text())
+    generator = payload['provenance']['generator']
+    assert generator['name'] == 'cfg_v2:structured'
+    assert generator['config'] == config
+    replay, direct = GraphEngine(), GraphEngine()
+    assert descriptor.fn(replay, seed=7, **generator['config']) == generate_cfg_v2(
+        direct, seed=7, spec=spec)
+    assert cfg_edges(replay) == cfg_edges(direct)
+
+
+@pytest.mark.parametrize('mode,expected', [
+    ('short', [(0, 1), (1, 4), (2, 4), (3, 4)]),
+    ('long', [(1, 2), (1, 3)]),
+    ('uniform', [(0, 1), (1, 2), (1, 3), (1, 4), (2, 4), (3, 4)]),
+])
+def test_structured_padding_candidates(mode, expected):
+    from cfg_reducer.generator_types import CFGShape
+
+    class RecordingRandom(Random):
+        def choice(self, seq):
+            assert seq == expected
+            return seq[0]
+
+    nodes = tuple(f'N{i:02d}' for i in range(5))
+    edges = ((0, 1), (1, 2), (1, 3), (1, 4), (2, 4), (3, 4))
+    shape = CFGShape(nodes, tuple((nodes[u], nodes[v]) for u, v in edges), nodes[0])
+    padded = pad_shape(shape, 6, mode, RecordingRandom())
+    src, dst = expected[0]
+    mapped = {i: f'N{i + (i >= dst):02d}' for i in range(5)}
+    inserted = f'N{dst:02d}'
+    assert padded.edges == tuple(sorted(
+        [(mapped[u], mapped[v]) for u, v in edges if (u, v) != (src, dst)]
+        + [(mapped[src], inserted), (inserted, mapped[dst])]))
+    assert is_reducible(padded.nodes, padded.edges, entry=padded.entry)
