@@ -155,3 +155,34 @@ structured 族の n24・200 seed(棄却 0、全件 reducible、realized ノー�
   異なる族になっている。`target_depth` は MetaGraph の max_depth を正確に制御できる。
 - family OOD(layered → structured)は「reducible 化・合流の減少・参照距離の短縮」の
   複合シフトになる。depth / degree OOD は structured 内で params を振って作る。
+
+## 10. Pilot(2026-09-09、n24、測定モード、seed train 0:2000 / val 2000:2200 / test 2200:2400、version `pilot-c`)
+
+| 族(params) | 採用 / 試行 | reducible | mean_offset(low/mid/high) | max_depth | max_in_degree | n_merge | 占有 bucket |
+|---|---|---|---|---|---|---|---|
+| layered(v1 相当: width3, p.18, L3, G2) | 2000/2000 | 8.8% | 1.88(448 / 1030 / 522) | 1:410, 2:974, 3:615 | 2:198, 3:1386, 4+:416 | 8.4 | 47/54 |
+| structured(L3, G2, depth 乱択 1–3) | 1970/2000(重複 30) | **100%** | 1.43(**1766** / 179 / 25) | 1:633, 2:676, 3:661 | 2:1484, 3:486 | 3.0 | 14/54 |
+| spaghetti(同 + rate 0.1) | 2000/2000 | 43% | 1.53(1591 / 328 / 81) | 1:196, 2:677, 3:755, 4:316, 5:56 | 2:1168, 3:766, 4+:65 | 4.4 | 47/54 |
+
+所見:
+- mean_offset の境界 (1.68, 2.03) は v1 の四分位(q25 / q75)であり、layered では 22 / 52 / 26% に分かれる(設計文書の注記どおり三分位ではない。A7-2 の数値は固定のまま使う)。
+- structured は参照距離が構造的に短く、mean_offset 次元ではほぼ 1 bin。depth / degree は params で直接制御できる(§9)。
+- structured の同型重複(1.5%)は同型排除で自然に落ちる。seed 範囲は必要数の 1.05 倍程度を見込む。
+
+### D2 の具体化: セルとデータ(n24、production は pilot と別 seed 範囲・別 version)
+
+| セル | train / val(source) | test(target) | 採用 |
+|---|---|---|---|
+| ID | layered(v1 相当) | layered | 自然分布 |
+| family OOD | 同上(**学習は ID と共有**) | structured / spaghetti(別 test) | 自然分布、source を exclude |
+| family OOD′ | structured(L3 G2) | layered / spaghetti | 自然分布、source を exclude |
+| depth OOD | structured target_depth=1 | structured target_depth=3(2 は参考) | ranges: realized max_depth を train ≤1 / test =3 で確認 |
+| degree OOD | structured merge_degree=2 | structured merge_degree=4 | ranges: realized max_in_degree を train ≤2 / test ∈[3,4]。test 側の採用率が低いので seed 範囲を 4 倍 |
+| balanced-k | layered、plan: mean_offset 3 bin を等数(他次元は無制限) | 同じ plan | bucket 採用。low bin が 22% なので seed 範囲は 3 倍 |
+
+- 学習 run(n24、seed 0–2): layered(base / mask / ptr)9、structured(base / mask)6、
+  structured depth1(base / mask)6、structured merge2(base / mask)6、balanced-k layered
+  (base / mask)6 = **33 run**(1 run ≈ 4 分)。
+- 同じ source train から作った bundle は vocab が同一なので、1 つの学習済みモデルを複数の
+  test(ID / family OOD の各 target)に**再採点**して使う(Colab の再採点スクリプト)。
+- 節目(family OOD の確定時)に n = 12, 16, 24, 32, 48 のスイープ(A7-5)。
