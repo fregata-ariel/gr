@@ -1,7 +1,7 @@
 # C の設計見直し: 生成器 v2 と構造 OOD マトリクス
 
 作成日: 2026-09-04
-状態: **Q7 承認済み(A7)・詳細設計中**(設計: Codex GPT-6 Astra high / 実装: Codex GPT-6 Astra low、進行と判断: Claude)
+状態: **実装完了・実験実行中**(設計: Codex GPT-6 Astra high / 実装: Codex GPT-6 Astra low、進行と判断: Claude)
 前提: B の判定(`controlled_eval.md`)— 既定構成は baseline + 参照合法マスク
 (`--ref-legal-mask`)、pointer は不採用。決定 A6-6 により窓なし pointer は C へ。
 ブランチ: `feat/generator-v2`(`feat/controlled-eval` から分岐)
@@ -186,3 +186,25 @@ structured 族の n24・200 seed(棄却 0、全件 reducible、realized ノー�
 - 同じ source train から作った bundle は vocab が同一なので、1 つの学習済みモデルを複数の
   test(ID / family OOD の各 target)に**再採点**して使う(Colab の再採点スクリプト)。
 - 節目(family OOD の確定時)に n = 12, 16, 24, 32, 48 のスイープ(A7-5)。
+
+## 11. Production データと実験の起動(2026-09-09)
+
+`python -m cfg_reducer.dataset_v2`(version = git commit)で n24 の 8 dataset、
+`prepare_tokens --window-from train [--test-dataset]` で 11 bundle を生成した(所要 1 分弱)。
+
+| dataset | spec | 採用 / 試行 | 備考 |
+|---|---|---|---|
+| c_layered | layered v1 相当 | 2000 / 200 / 200 | ID・family OOD の source |
+| c_structured | structured L3 G2 | 2066 / 203 / 206(試行 2100 / 210 / 210) | c_layered を exclude |
+| c_spaghetti | spaghetti rate .1 | test 210 | c_layered, c_structured を exclude |
+| c_structured_depth1 / depth3 | target_depth 1 / 3 + ranges | 2183 / 216 / 217、test 216 | depth OOD |
+| c_structured_merge2 / merge4 | merge_degree 2 / 4 + ranges | 2163 / 214 / 208、test **230 / 1000**(採用率 23%) | degree OOD |
+| c_layered_balanced | layered + mean_offset 3 bin 等数 | 2001 / 201 / 201(試行 6000 / 600 / 600) | balanced-k |
+
+bundle の窓は source train で決まる(layered 20、structured 14、depth1 13、merge2 13、
+balanced 18)。OOD target の窓超過除外は 2〜3 件(str2lay 2、depth 2、merge 3)。
+
+実験: Colab T4 セッション `c`、33 run(layered: base / mask / ptr、他: base / mask、各 seed 0–2、
+`--epochs 300 --patience 20`、診断 400 + 制約 400 サンプル)。各 source のモデルは学習後に
+OOD target の test を同 VM 上で再採点する(`rescore_c.py`)。集計は `controlled_eval`
+(--prefix c_<src>_ / c_<src>2<tgt>_、--by-bucket)。
