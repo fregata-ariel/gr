@@ -317,7 +317,7 @@ def _build_selected(out_dir, splits, config, version, generator, code,
             # Dispatch closures may expose split-specific plans through .plans.
             plan: BucketPlan | None = getattr(accept, 'plans', {}).get(split, getattr(accept, 'plan', None))
             plans[split] = asdict(plan) if plan is not None else None
-            ranges = getattr(accept, 'ranges', None)
+            ranges = getattr(accept, 'split_ranges', {}).get(split, getattr(accept, 'ranges', None))
             if ranges is not None:
                 plans[split] = (plans[split] or {}) | {'ranges': dict(ranges)}
             counts: dict[str, int] = {}
@@ -396,7 +396,8 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                 'generator': {'name': desc.name, 'version': version, 'config': config},
                 'splits': manifest_splits,
                 'selection': {'version': 1, 'plans': plans,
-                              'excluded_datasets': sorted({r.dataset_id for r in exclude})}}
+                              'excluded_datasets': sorted({r.dataset_id for r in exclude}
+                                                          | set(getattr(accept, 'excluded_datasets', ())))}}
     for key in ('attempts', 'accepted', 'rejected'):
         manifest[key] = sum(s[key] for s in manifest_splits.values())
     if code is not None:
