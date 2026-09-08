@@ -271,3 +271,74 @@ def test_structured_padding_candidates(mode, expected):
         [(mapped[u], mapped[v]) for u, v in edges if (u, v) != (src, dst)]
         + [(mapped[src], inserted), (inserted, mapped[dst])]))
     assert is_reducible(padded.nodes, padded.edges, entry=padded.entry)
+
+
+@pytest.mark.parametrize('seed', range(10))
+def test_spaghetti_rate_zero(seed: int) -> None:
+    from cfg_reducer.families.spaghetti import Spaghetti
+
+    params: dict[str, Json] = {'span_mode': ('short', 'long', 'uniform')[seed % 3]}
+    base = Structured().generate(GeneratorSpec('structured', 24, params), Random(seed))
+    spec = GeneratorSpec('spaghetti', 24, params | {'spaghetti_rate': 0})
+    assert Spaghetti().generate(spec, Random(seed)) == base
+    assert descriptor_for(spec).name == 'cfg_v2:spaghetti'
+    engine = GraphEngine()
+    assert generate_cfg_v2(engine, seed=seed, spec=spec) == list(base.nodes)
+    assert tuple(cfg_edges(engine)) == base.edges
+
+
+@pytest.mark.parametrize('n', [3, 4, 24])
+@pytest.mark.parametrize('rate', [0.1, 0.5, 1.0])
+def test_spaghetti_edge_budget(n: int, rate: float) -> None:
+    import math
+    from cfg_reducer.families.spaghetti import Spaghetti
+
+    params: dict[str, Json] = {'loop_count': 0, 'goto_count': 0} if n < 12 else {}
+    for seed in range(5):
+        rng = Random(seed)
+        base = Structured().generate(GeneratorSpec('structured', n, params), rng)
+        candidates = sorted((u, v) for u in base.nodes for v in base.nodes
+                            if u != v and (u, v) not in base.edges
+                            and v != base.entry and u != base.nodes[-1])
+        budget = min(math.floor(rate * len(base.edges)), len(candidates))
+        expected = rng.sample(candidates, budget)
+        spec = GeneratorSpec('spaghetti', n, params | {'spaghetti_rate': rate})
+        shape = Spaghetti().generate(spec, Random(seed))
+        extra = set(shape.edges) - set(base.edges)
+        assert len(extra) == budget
+        assert extra == set(expected)
+        assert set(base.edges) <= set(shape.edges)
+        assert shape.edges == tuple(sorted(set(shape.edges)))
+        assert shape.nodes == base.nodes and shape.entry == base.entry
+        assert all(u != v and v != shape.entry and u != shape.nodes[-1] for u, v in extra)
+        reached = {shape.entry}
+        while True:
+            expanded = reached | {v for u, v in shape.edges if u in reached}
+            if expanded == reached:
+                break
+            reached = expanded
+        assert reached == set(shape.nodes)
+
+
+@pytest.mark.parametrize('rate', [-0.1, 1.1, True, None, '0.1', float('nan'), float('inf')])
+def test_spaghetti_invalid_rate(rate: Json) -> None:
+    with pytest.raises(ValueError):
+        normalize_spec(GeneratorSpec('spaghetti', 24, {'spaghetti_rate': rate}))
+
+
+def test_spaghetti_normalize() -> None:
+    from cfg_reducer.generator_types import GenerationRejected as SharedRejected
+
+    assert GenerationRejected is SharedRejected
+    normalized = normalize_spec(GeneratorSpec('spaghetti', 24))
+    assert normalized.params == normalize_spec(GeneratorSpec('structured', 24)).params | {
+        'spaghetti_rate': 0.1}
+    assert normalize_spec(normalized) == normalized
+    invalid: list[tuple[str, dict[str, Json]]] = [
+        ('structured', {'spaghetti_rate': 0}),
+        ('spaghetti', {'unknown': 1}),
+        ('spaghetti', {'merge_degree': 1}),
+    ]
+    for family, params in invalid:
+        with pytest.raises(ValueError):
+            normalize_spec(GeneratorSpec(family, 24, params))

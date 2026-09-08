@@ -57,3 +57,11 @@ class CFGShape:
     nodes: tuple[str, ...]
     edges: tuple[tuple[str, str], ...]
     entry: str
+
+
+class GenerationRejected(Exception):
+    """A known, seed-dependent generation failure."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason

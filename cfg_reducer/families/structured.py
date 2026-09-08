@@ -8,6 +8,7 @@ from random import Random
 from typing import cast
 
 from ..generator_types import CFGShape, GeneratorSpec, Json
+from ..generator_types import GenerationRejected as GenerationRejected
 
 
 @dataclass(frozen=True)
@@ -119,14 +120,6 @@ def lower_structure(tree: Stmt, merge_degree: int) -> CFGShape:
     names = {symbol: f"N{i:02d}" for i, symbol in enumerate(order)}
     return CFGShape(tuple(names[symbol] for symbol in order),
                     tuple(sorted((names[u], names[v]) for u, v in edges)), names[0])
-
-
-class GenerationRejected(Exception):
-    """A known, seed-dependent generation failure."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
 
 
 _DEFAULTS: dict[str, Json] = {
