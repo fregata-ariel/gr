@@ -140,3 +140,18 @@ bucket を埋める。
 作業分担(2026-09-09): 全体の進行と設計判断は Claude、詳細設計は Codex(GPT-6 Astra、
 effort high)、実装は Codex(GPT-6 Astra、effort low)。設計・実装の成果物はこの
 リポジトリの文書とコードに残し、判断は本ファイルと `handoff_questions.md` に記録する。
+
+## 9. 実装中の実測(2026-09-09、タスク 7 受け入れ時)
+
+structured 族の n24・200 seed(棄却 0、全件 reducible、realized ノード数 23–25):
+
+| params | mean_offset | max_offset | max_depth | n_loops | max_in_degree | n_merge |
+|---|---|---|---|---|---|---|
+| 既定(L2 G1) | 1.70(1.36–1.97) | 7.6 | 1–2 | 2 | 2 | 3.8 |
+| L3 G2 | 1.42(1.29–1.52) | 5.6 | 1–3 | 3 | 2–3 | 3.0 |
+| L3 G2 depth3 branch3 | 1.53 | 6.4 | **3 に固定** | 3 | 2–3 | 2.9 |
+
+- v1(§2: irreducible 90%、max_in_degree 3–8、n_merge 8.3、mean_offset 1.88)とは明確に
+  異なる族になっている。`target_depth` は MetaGraph の max_depth を正確に制御できる。
+- family OOD(layered → structured)は「reducible 化・合流の減少・参照距離の短縮」の
+  複合シフトになる。depth / degree OOD は structured 内で params を振って作る。
