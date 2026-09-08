@@ -16,6 +16,7 @@ larger offset are excluded and listed in meta.json (external review
 
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -24,7 +25,12 @@ from training.data_utils import write_jsonl
 
 
 def prepare(dataset_dir: str | Path, out_dir: str | Path,
-            window_from: str | None = None) -> dict:
+            window_from: str | None = None, *,
+            test_dataset: str | Path | None = None) -> dict:
+    if test_dataset is not None:
+        if window_from != "train":
+            raise ValueError("--test-dataset requires --window-from train")
+        return _prepare_cross_dataset(Path(dataset_dir), Path(test_dataset), Path(out_dir))
     dataset_path = Path(dataset_dir)
     manifest = json.loads(
         (dataset_path / "manifest.json").read_text(encoding="utf-8")
@@ -88,6 +94,82 @@ def prepare(dataset_dir: str | Path, out_dir: str | Path,
     return meta
 
 
+def _prepare_cross_dataset(source: Path, target: Path, out: Path) -> dict:
+    """Build a source-shaped bundle with provenance and exclusion denominators."""
+    source_bytes = (source / "manifest.json").read_bytes()
+    target_bytes = (target / "manifest.json").read_bytes()
+    source_manifest, target_manifest = json.loads(source_bytes), json.loads(target_bytes)
+    sources = {split: hashlib.sha256(data).hexdigest() for split, data in
+               (("train", source_bytes), ("val", source_bytes), ("test", target_bytes))}
+    loaded = {}
+    seen = set()
+    for split, path, manifest in (("train", source, source_manifest),
+                                  ("val", source, source_manifest),
+                                  ("test", target, target_manifest)):
+        rows = []
+        for entry in manifest["splits"][split]["samples"]:
+            sid = entry["sample_id"]
+            if sid in seen:
+                raise ValueError(f"duplicate sample_id: {sid}")
+            seen.add(sid)
+            mg = store.load_sample(path / split / f"{sid}.json")
+            rows.append((entry, mg, model_input.max_offset_needed(mg)))
+        loaded[split] = rows
+    if not loaded["train"]:
+        raise ValueError("source train must be nonempty")
+    max_offset = max(1, max(row[2] for row in loaded["train"]))
+    vocab = model_input.build_vocab(max_offset)
+    max_len = max(len(model_input.tokenize(row[1], vocab)) for row in loaded["train"])
+    capacity = 2 * max_len
+    index = {"version": 1, "sources": sources,
+             "selection": target_manifest.get("selection"), "samples": {}, "exclusions": []}
+    counts = {}
+    excluded_window = {}
+    output = {}
+    for split, rows in loaded.items():
+        records = []
+        stats = {"raw": len(rows), "retained": 0, "excluded": 0, "by_bucket": {}}
+        for entry, mg, needed in rows:
+            sid, bucket = entry["sample_id"], entry.get("bucket")
+            group = stats["by_bucket"].setdefault(
+                bucket if bucket is not None else "__unmeasured__",
+                {"raw": 0, "retained": 0, "excluded": 0})
+            group["raw"] += 1
+            reason = None
+            tokens = []
+            if needed > max_offset:
+                reason = "over_window"
+                excluded_window.setdefault(split, []).append(entry["seed"])
+            else:
+                tokens = model_input.tokenize(mg, vocab)
+                if split != "train" and len(tokens) > capacity:
+                    reason, needed = "over_length", len(tokens)
+            if reason:
+                index["exclusions"].append({"sample_id": sid, "seed": entry["seed"],
+                    "split": split, "reason": reason, "needed": needed, "bucket": bucket})
+                stats["excluded"] += 1
+                group["excluded"] += 1
+            else:
+                records.append({"sample_id": sid, "seed": entry["seed"], "tokens": tokens})
+                index["samples"][sid] = {"split": split, "bucket": bucket,
+                                            "realized": entry.get("realized")}
+                stats["retained"] += 1
+                group["retained"] += 1
+        counts[split], output[split] = stats, records
+    meta = {"max_offset": max_offset, "max_len": max_len, "max_len_source": "train",
+            "sequence_capacity": capacity, "window_from": "train", "sources": sources,
+            "splits": {s: c["retained"] for s, c in counts.items()}, "counts": counts,
+            "excluded_over_window": {s: {"count": len(v), "seeds": v}
+                                     for s, v in excluded_window.items()},
+            "exclusions": index["exclusions"]}
+    out.mkdir(parents=True, exist_ok=True)
+    for split, records in output.items():
+        write_jsonl(out / f"{split}.jsonl", records)
+    for name, data in (("vocab", vocab), ("meta", meta), ("evaluation_index", index)):
+        (out / f"{name}.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return meta
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m training.prepare_tokens",
@@ -102,9 +184,10 @@ def main(argv: list[str] | None = None) -> None:
              "other splits' samples needing a larger offset are excluded "
              "and listed in meta.json",
     )
+    parser.add_argument("--test-dataset", metavar="DIR")
     args = parser.parse_args(argv)
 
-    meta = prepare(args.dataset, args.out, args.window_from)
+    meta = prepare(args.dataset, args.out, args.window_from, test_dataset=args.test_dataset)
     print(
         f"vocab window REF_1..REF_{meta['max_offset']}, "
         f"max stream length {meta['max_len']}, "

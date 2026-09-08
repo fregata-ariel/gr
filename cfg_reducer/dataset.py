@@ -12,7 +12,8 @@ import argparse
 import json
 import subprocess
 import warnings
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,9 @@ from .algorithm import ReductionAlgorithm
 from .engine import GraphEngine
 from .generate import GENERATOR_NAME, generate_cfg
 from .types import MetaGraph
+from .buckets import (AcceptHook, AcceptDecision, AcceptanceState, BucketPlan,
+                      Candidate, CFGReference)
+from .generator_types import GenerationRejected
 
 # generator(engine, *, seed=..., **config) -> node ids
 Generator = Callable[..., list[str]]
@@ -135,6 +139,9 @@ def build_dataset(
     version: str,
     generator: Generator | GeneratorDescriptor = DEFAULT_GENERATOR,
     code: dict | None = None,
+    *,
+    accept: AcceptHook | None = None,
+    exclude: tuple[CFGReference, ...] = (),
 ) -> dict:
     """
     Generate one sample per seed, drop structural duplicates across the
@@ -146,8 +153,14 @@ def build_dataset(
     wrapped into a GeneratorDescriptor named after the function; code
     (e.g. {"commit", "dirty"} from the CLI) is recorded in the manifest
     only, so sample_ids stay a function of the generator identity.
+
+    accept and exclude independently enable selection accounting. Quota hooks
+    expose .plan; a split-dispatching callable can expose .plans mapping split
+    names to BucketPlan objects so even unvisited buckets are reported.
     """
     _validate_splits(splits)
+    if accept is not None or exclude:
+        return _build_selected(out_dir, splits, config, version, generator, code, accept, exclude)
     desc = _as_descriptor(generator)
     out = Path(out_dir)
 
@@ -282,6 +295,119 @@ def main(argv: list[str] | None = None) -> None:
             f"{name}: kept {info['kept']}, "
             f"dropped {info['dropped_duplicates']} duplicates"
         )
+
+
+
+
+def _build_selected(out_dir, splits, config, version, generator, code,
+                    accept: AcceptHook | None, exclude: tuple[CFGReference, ...]) -> dict:
+    desc = _as_descriptor(generator)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    references: dict[str, list[CFGReference]] = {}
+    seen: dict[str, list[CFGReference]] = {}
+    for ref in sorted(exclude, key=lambda r: (r.dataset_id, r.sample_id, r.nodes, r.edges)):
+        references.setdefault(fingerprint(list(ref.edges), list(ref.nodes)), []).append(ref)
+    manifest_splits = {}
+    plans = {}
+    with (out / 'rejections.jsonl').open('w', encoding='utf-8') as rejected_file:
+        for split, (start, stop) in splits.items():
+            split_dir = out / split
+            split_dir.mkdir(parents=True, exist_ok=True)
+            # Dispatch closures may expose split-specific plans through .plans.
+            plan: BucketPlan | None = getattr(accept, 'plans', {}).get(split, getattr(accept, 'plan', None))
+            plans[split] = asdict(plan) if plan is not None else None
+            ranges = getattr(accept, 'split_ranges', {}).get(split, getattr(accept, 'ranges', None))
+            if ranges is not None:
+                plans[split] = (plans[split] or {}) | {'ranges': dict(ranges)}
+            counts: dict[str, int] = {}
+            per_bucket = {bid: _bucket_stats(plan.target_per_bucket) for bid in plan.bucket_ids()} if plan else {}
+            unbucketed = _bucket_stats(None)
+            kept, dropped = [], []
+            reasons: dict[str, int] = {}
+            for seed in range(start, stop):
+                engine = GraphEngine()
+                bucket = realized = duplicate_of = duplicate_dataset = None
+                reason = None
+                try:
+                    generated_nodes = desc.fn(engine, seed=seed, **config)
+                except GenerationRejected as exc:
+                    reason = exc.reason
+                else:
+                    # Generator contract places the entry first; preserve it for reducibility.
+                    nodes, edges = tuple(generated_nodes), tuple(cfg_edges(engine))
+                    if set(nodes) != set(cfg_nodes(engine)) or len(nodes) != len(set(nodes)):
+                        raise ValueError('generator returned an invalid node snapshot')
+                    fp = fingerprint(list(edges), list(nodes))
+                    for pool, duplicate_reason in ((references, 'cross_dataset_duplicate'), (seen, 'duplicate')):
+                        match = next((r for r in pool.get(fp, []) if is_structural_duplicate(
+                            list(edges), list(r.edges), list(nodes), list(r.nodes))), None)
+                        if match is not None:
+                            duplicate_of = match.sample_id
+                            duplicate_dataset = match.dataset_id if pool is references else None
+                            reason = duplicate_reason
+                            break
+                    provenance = {'source': 'synthetic', 'generator': {
+                        'name': desc.name, 'version': version, 'seed': seed, 'config': config}}
+                    sample_id = store.sample_id_for(provenance)
+                    requested = deepcopy(config)
+                    if accept is not None or reason is None:
+                        mg = reduce_to_metagraph(engine)
+                        if accept is not None:
+                            decision = accept(Candidate(split, seed, sample_id, requested, nodes, edges, mg),
+                                              AcceptanceState(tuple(sorted(counts.items()))))
+                            if not isinstance(decision, AcceptDecision) or type(decision.accepted) is not bool:
+                                raise TypeError('accept must return AcceptDecision')
+                            if (decision.accepted and decision.reason is not None) or (not decision.accepted and not decision.reason):
+                                raise ValueError('inconsistent acceptance decision')
+                            bucket, realized = decision.bucket, decision.realized
+                            if reason is None and not decision.accepted:
+                                reason = decision.reason
+                        if reason is None:
+                            store.save_sample(mg, provenance, split_dir / f'{sample_id}.json', sample_id)
+                            seen.setdefault(fp, []).append(CFGReference('', sample_id, nodes, edges))
+                            if bucket is not None:
+                                counts[bucket] = counts.get(bucket, 0) + 1
+                            kept.append({'seed': seed, 'sample_id': sample_id, 'requested': requested,
+                                         'realized': realized, 'bucket': bucket})
+                stats = unbucketed if bucket is None else per_bucket.setdefault(bucket, _bucket_stats(None))
+                stats['attempts'] += 1
+                stats['accepted' if reason is None else 'rejected'] += 1
+                if reason is not None:
+                    reasons[reason] = reasons.get(reason, 0) + 1
+                    if duplicate_of is not None:
+                        dropped.append({'seed': seed, 'duplicate_of': duplicate_of})
+                    row = {'seed': seed, 'split': split, 'reason': reason, 'bucket': bucket,
+                           'realized': realized, 'duplicate_of': duplicate_of,
+                           'duplicate_dataset': duplicate_dataset}
+                    rejected_file.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + '\n')
+            for stats in per_bucket.values():
+                if stats['target'] is not None:
+                    stats['missing'] = max(0, stats['target'] - stats['accepted'])
+            attempts = stop - start
+            manifest_splits[split] = {
+                'seed_range': [start, stop], 'kept': len(kept), 'dropped_duplicates': len(dropped),
+                'samples': kept, 'dropped': dropped, 'attempts': attempts, 'accepted': len(kept),
+                'rejected': attempts - len(kept), 'acceptance_rate': len(kept) / attempts,
+                'complete': all(s['missing'] in (None, 0) for s in per_bucket.values()),
+                'per_bucket': per_bucket, 'unbucketed': unbucketed, 'rejected_by_reason': reasons,
+            }
+    manifest = {'schema_version': store.SCHEMA_VERSION,
+                'generator': {'name': desc.name, 'version': version, 'config': config},
+                'splits': manifest_splits,
+                'selection': {'version': 1, 'plans': plans,
+                              'excluded_datasets': sorted({r.dataset_id for r in exclude}
+                                                          | set(getattr(accept, 'excluded_datasets', ())))}}
+    for key in ('attempts', 'accepted', 'rejected'):
+        manifest[key] = sum(s[key] for s in manifest_splits.values())
+    if code is not None:
+        manifest['code'] = code
+    (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False), encoding='utf-8')
+    return manifest
+
+
+def _bucket_stats(target: int | None) -> dict:
+    return {'target': target, 'attempts': 0, 'accepted': 0, 'rejected': 0, 'missing': target}
 
 
 if __name__ == "__main__":
