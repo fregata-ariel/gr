@@ -1,7 +1,7 @@
 # C の設計見直し: 生成器 v2 と構造 OOD マトリクス
 
 作成日: 2026-09-04
-状態: **設計レビュー中**(Q7 の判断待ち。実装未着手)
+状態: **Q7 承認済み(A7)・詳細設計中**(設計: Codex GPT-6 Astra high / 実装: Codex GPT-6 Astra low、進行と判断: Claude)
 前提: B の判定(`controlled_eval.md`)— 既定構成は baseline + 参照合法マスク
 (`--ref-legal-mask`)、pointer は不採用。決定 A6-6 により窓なし pointer は C へ。
 ブランチ: `feat/generator-v2`(`feat/controlled-eval` から分岐)
@@ -128,3 +128,15 @@ bucket を埋める。
 | Q7-5 | ノード数: n24 主、family OOD のみ n32 | 既定どおり |
 | Q7-6 | offset OOD と窓なし pointer を C′ に送る | 送る |
 | Q7-7 | structured 族のノード予算: realized `num_nodes` の ±10% を許容し記録 | 許容 |
+
+## 8. 決定(A7、2026-09-09)
+
+| # | 決定 | 設計への反映 |
+|---|---|---|
+| A7-1 | 3 族で開始。**族は後で複数回差し替え・追加する**ので抽象化に注意 | 族を plugin として登録する共通インタフェース(spec → CFG 構成、realized 特徴の共通測定、provenance 名の族別付与)。族の追加が `dataset.py` / `controlled_eval.py` の変更を要しない構造にする |
+| A7-2〜4, 6, 7 | 既定どおり承認 | — |
+| A7-5 | n24 主体で進めるが、**節目では B 以前のスイープと同様に多くのノード数(12〜48)で実証する** | 実験計画に「節目のノード数スイープ」を入れる(family OOD の確定時など) |
+
+作業分担(2026-09-09): 全体の進行と設計判断は Claude、詳細設計は Codex(GPT-6 Astra、
+effort high)、実装は Codex(GPT-6 Astra、effort low)。設計・実装の成果物はこの
+リポジトリの文書とコードに残し、判断は本ファイルと `handoff_questions.md` に記録する。
