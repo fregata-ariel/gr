@@ -1,5 +1,6 @@
-"""Explicit built-in family registrations belong here.
+"""Explicit built-in family registrations; no directory discovery."""
 
-There are no built-in implementations yet. Add imports and register_family
-calls here as families are implemented; no directory discovery is performed.
-"""
+from ..family_registry import register_family
+from .layered import Layered
+
+register_family(Layered())
