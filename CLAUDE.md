@@ -54,3 +54,25 @@ MetaGraph invariants, verification commands, and open design decisions.
 
 `/home/user/Projects/Compiler/pyClangAST/` — C/C++ AST parser (`calisp`) for building
 real CFG training corpora. Read-only reference; not modified from this project.
+
+## Delegation
+
+Rules that delegated agents must follow are in `AGENTS.md` (both Codex and OpenCode
+read it at start-up). Division of labour since 2026-09-09: Claude Code orchestrates and
+takes design decisions; Codex (`gpt-6-astra`, effort `high`) writes detailed designs;
+Codex (`gpt-6-astra`, effort `low`) implements one or two design tasks per run; OpenCode
+(`opencode-go/deepseek-v4.1-flash`, `opencode-go/muse-spark-1.3-contributor`) is used
+for prototype-level scripts and bounded edits. Every delegated result is re-verified
+here (`uv run pytest -q`, `uv run ty check`, `git diff --check`) before it is committed.
+
+- Codex: `node ~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs
+  task --background --write --model gpt-6-astra --effort <high|low> "$(cat prompt.md)"`,
+  then `status` / `result`. Write the prompt to a file with a quoted heredoc; a bash
+  double-quoted string swallows backticks.
+- OpenCode: run in a data-free `git worktree add --detach /tmp/oc-wt HEAD` (the real
+  checkout's `data/` and `runs/` make its init hang) and always under `timeout`.
+  Read-only generation: `opencode run --pure --agent plan -m <model> --dir /tmp/oc-wt --
+  "<prompt>"`; bounded edits: `--agent build --auto` in the worktree, then review the
+  diff. Never put backticks in the message or an attached file — `opencode run` stalls
+  silently on them. A run that produces no output within a few minutes is a stall:
+  retry once.
