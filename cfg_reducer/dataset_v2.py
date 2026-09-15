@@ -18,15 +18,22 @@ from .family_registry import load_plugins
 from .generate_v2 import descriptor_for, normalize_spec, spec_from_json, spec_to_json
 
 
-def load_references(paths: tuple[Path, ...], *, version: str) -> tuple[CFGReference, ...]:
-    """Replay accepted manifest entries; IDs validate provenance, not CFG content."""
+def load_references(paths: tuple[Path, ...], *, version: str,
+                    allow_version_mismatch: bool = False) -> tuple[CFGReference, ...]:
+    """Replay accepted manifest entries; IDs validate provenance, not CFG content.
+
+    The excluded dataset must carry the same generator version unless
+    allow_version_mismatch is set — only do that when the families it
+    used are unchanged between the two versions (AGENTS.md version rule),
+    because the CFGs are regenerated with the current code.
+    """
     references = []
     for path in paths:
         raw = (path / "manifest.json").read_bytes()
         dataset_id = hashlib.sha256(raw).hexdigest()
         manifest = json.loads(raw)
         generator = manifest["generator"]
-        if generator["version"] != version:
+        if generator["version"] != version and not allow_version_mismatch:
             raise ValueError("generator version mismatch")
         config = generator["config"]
         if generator["name"] == DEFAULT_GENERATOR.name:
@@ -43,8 +50,10 @@ def load_references(paths: tuple[Path, ...], *, version: str) -> tuple[CFGRefere
             for sample in split["samples"]:
                 engine = GraphEngine()
                 nodes = descriptor.fn(engine, seed=sample["seed"], **config)
+                # replay under the manifest's own version: the check is
+                # about the manifest's internal consistency, not ours
                 provenance = {"source": "synthetic", "generator": {
-                    "name": descriptor.name, "version": version,
+                    "name": descriptor.name, "version": generator["version"],
                     "seed": sample["seed"], "config": config,
                 }}
                 if store.sample_id_for(provenance) != sample["sample_id"]:
@@ -100,6 +109,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--version")
     parser.add_argument("--plugin", action="append", default=[])
     parser.add_argument("--exclude-dataset", type=Path, action="append", default=[])
+    parser.add_argument("--allow-version-mismatch", action="store_true",
+                        help="accept excluded datasets built under another generator "
+                             "version (only when their families are unchanged)")
     parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args(argv)
     load_plugins(tuple(args.plugin))
@@ -112,7 +124,8 @@ def main(argv: list[str] | None = None) -> None:
     code = _git_state()
     version = args.version if args.version is not None else code["commit"]
     paths = tuple(args.exclude_dataset)
-    exclude = load_references(paths, version=version)
+    exclude = load_references(paths, version=version,
+                              allow_version_mismatch=args.allow_version_mismatch)
     setattr(accept, "excluded_datasets", tuple(
         hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest() for path in paths
     ))

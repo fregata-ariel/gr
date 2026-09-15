@@ -234,3 +234,20 @@ for family in ('layered', 'structured', 'spaghetti'):
                         for m in manifests]
         assert small and small.items() <= large.items()
         assert all(m['rejected'] > 0 for m in manifests)
+
+
+def test_load_references_version_mismatch_needs_explicit_override(tmp_path):
+    from cfg_reducer import dataset_v2
+    from cfg_reducer.generate_v2 import descriptor_for, normalize_spec, spec_to_json
+    from cfg_reducer.generator_types import GeneratorSpec
+
+    spec = GeneratorSpec("layered", 8, {"edge_prob": 0.3})
+    build_dataset(tmp_path / "a", {"train": (0, 3)},
+                          {"spec": spec_to_json(normalize_spec(spec))}, "v1",
+                          descriptor_for(spec))
+    with pytest.raises(ValueError, match="version mismatch"):
+        dataset_v2.load_references((tmp_path / "a",), version="v2")
+    refs = dataset_v2.load_references((tmp_path / "a",), version="v2",
+                                      allow_version_mismatch=True)
+    assert len(refs) == 3 and all(r.nodes and r.edges for r in refs)
+    assert dataset_v2.load_references((tmp_path / "a",), version="v1") == refs
