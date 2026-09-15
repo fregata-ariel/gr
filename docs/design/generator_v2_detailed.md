@@ -126,6 +126,9 @@ lower は先に entry/exit の記号を予約し、AST を前順で訪問して�
 | break / continue / return | 専用1ノード→最内 loop の X / T / 関数 EXIT。通常出口なし。while の T は副作用のない header 中継 |
 
 - abrupt 文は通常到達可能な atom の直前に `if(abrupt)` として挿入する。ただし専用 join を共有して「条件→abrupt / 元 atom」に下げるため追加2ノード。通常 arm を必ず残す。
+  同一 atom への反復挿入は planner が `seq(if(abrupt), ..., atom)` として表す。
+  lower は末尾に atom が続く連続 guard 群全体で join を共有し、通常側を次の条件または元 atom に直結する。
+  G 個の guard の追加は合流中継木を除いて 2G ノードとなる。
 - これにより loop の通常経路・back edge と後続文が残り、return を選んでも未到達ノードが生じない。switch 内 break は使わず、break は常に loop に属する。
 - 全配線を予約後、入次数 m=merge_degree を超える宛先について、**辺を削除せず**合流中継木を挿入する。
 - `join(sources,dst)`: sources を記号作成順で sort。数が m を超える間、先頭 m 個→新中継 J とし、それらを J に置換。残り（≤m）→dst。重複 source は先に除く。

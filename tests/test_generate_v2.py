@@ -195,6 +195,21 @@ def test_node_budget(mode: str, merge: int) -> None:
         assert len(after.edges) - len(before.edges) == 26 - len(before.nodes)
 
 
+def test_repeated_guards_fit_node_budget() -> None:
+    spec = GeneratorSpec('structured', 12, {
+        'loop_count': 0, 'goto_count': 5, 'merge_degree': 99})
+    for seed in range(100):
+        lowered = lower_structure(plan_structure(spec, Random(seed)), 99)
+        assert len(lowered.nodes) == 13
+        # Any GenerationRejected fails this regression: all 100 seeds must fit.
+        shape = Structured().generate(spec, Random(seed))
+        assert shape == lowered
+        assert is_reducible(shape.nodes, shape.edges, entry=shape.entry)
+        assert len(shape.edges) == len(set(shape.edges))
+        assert max(Counter(v for _, v in shape.edges).values()) <= 99
+    print('L=0 G=5 merge=99 n=12: successes=100, GenerationRejected=0')
+
+
 def test_structured_rejection_and_serial() -> None:
     # The lower bound passes, but sequential loops and join routers may exceed it.
     spec = GeneratorSpec('structured', 10, {'merge_degree': 2})

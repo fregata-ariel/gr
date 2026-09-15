@@ -67,7 +67,7 @@ def test_plan_defaults_and_shared_join():
         'loop_count': 1, 'target_depth': 1, 'goto_count': 3}), Random(0))
     body = tree.children[0].children[0]
     assert [child.kind for child in body.children] == ['if', 'if', 'if', 'atom']
-    assert len(lower_structure(tree, 99).nodes) == 6 + 3 * 3 - 1
+    assert len(lower_structure(tree, 99).nodes) == 12  # 3 + 3*1 + 2*3
     for n in (1, 2, 8):
         with pytest.raises(ValueError):
             plan_structure(GeneratorSpec('structured', n), Random(0))

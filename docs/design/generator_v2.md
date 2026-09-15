@@ -283,3 +283,7 @@ seed 分散が 2〜3 倍(±0.021 / ±0.026)。
 - **混合族データ**(layered + structured [+ spaghetti])での学習を既定データ候補とし、各 target への
   劣化が単族学習より小さいかを確認する(実 CFG 転移の準備)。
 - pyClangAST 実 CFG の接続(family OOD の「実データ」セル)。
+
+2026-09-15: R2 修正により structured 族の出力が変わる。
+以後の dataset は新 version(git commit)で生成する。
+§10〜§12 と混合族実験のデータは旧 version(1439828 / 4fe5569)で生成されたもの。

@@ -38,7 +38,8 @@ def lower_structure(tree: Stmt, merge_degree: int) -> CFGShape:
 
     Abrupt leaves have no normal exit and must be guarded by an if to
     preserve a normal path. In seq(if(abrupt), atom), the if's join is the
-    original atom, so the conditional insertion costs exactly two nodes.
+    original atom. Repeated guards in that seq connect directly to the next
+    condition, so every conditional insertion costs exactly two nodes.
     """
     if type(merge_degree) is not int or merge_degree < 2:
         raise ValueError("merge_degree must be an integer >= 2")
@@ -53,23 +54,33 @@ def lower_structure(tree: Stmt, merge_degree: int) -> CFGShape:
     def connect(sources: list[int], dst: int) -> None:
         incoming[dst].extend(sources)
 
-    def lower(stmt: Stmt) -> tuple[int, list[int]]:
+    def lower(stmt: Stmt, omit_join: bool = False) -> tuple[int, list[int]]:
         kind = stmt.kind
         if kind == "atom" or (kind == "seq" and not stmt.children):
             atom = node()
             return atom, [atom]
         if kind == "seq":
+            # Only guard runs ending in an atom share their continuation.
+            shared: set[int] = set()
+            continuation = False
+            for i in range(len(stmt.children) - 1, -1, -1):
+                child = stmt.children[i]
+                if (continuation and child.kind == "if"
+                        and child.children[0].kind in ("break", "continue", "return")):
+                    shared.add(i)
+                else:
+                    continuation = child.kind == "atom"
             first: int | None = None
             exits: list[int] = []
             previous: Stmt | None = None
-            for child in stmt.children:
+            for i, child in enumerate(stmt.children):
                 # Share the dedicated join with the following original atom.
                 if (child.kind == "atom" and previous is not None
                         and previous.kind == "if"
                         and previous.children[0].kind in ("break", "continue", "return")):
                     previous = child
                     continue
-                start, ends = lower(child)
+                start, ends = lower(child, omit_join=i in shared and i + 1 in shared)
                 if first is None:
                     first = start
                 else:
@@ -95,6 +106,11 @@ def lower_structure(tree: Stmt, merge_degree: int) -> CFGShape:
             connect([tail], header)
             connect([header if kind == "while" else tail], end)
             return header, [end]
+        if omit_join:
+            condition = node()
+            start, _ = lower(stmt.children[0])
+            connect([condition], start)
+            return condition, [condition]
         condition, join = node(), node()
         for child in stmt.children:
             start, exits = lower(child)

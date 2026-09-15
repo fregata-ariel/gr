@@ -50,6 +50,42 @@ def test_template_edges_abrupt(loop, abrupt):
     assert len(lower_structure(tree, 3).nodes) == len(lower_structure(Stmt(loop, (A,)), 3).nodes) + 2
 
 
+def test_repeated_return_guard_edges():
+    guard = Stmt("if", (Stmt("return"),))
+    shape = check_shape(Stmt("seq", (guard, guard, guard, A)), [
+        (0, 1), (1, 2), (2, 8), (1, 3), (3, 4), (4, 8),
+        (3, 5), (5, 7), (7, 8), (5, 6), (6, 8),
+    ], merge_degree=99)
+    assert len(shape.nodes) == 3 + 2 * 3
+
+
+@pytest.mark.parametrize("loop", ["while", "do_while"])
+@pytest.mark.parametrize("abrupt", ["break", "continue", "return"])
+def test_repeated_guard_edges_in_loop(loop, abrupt):
+    guard = Stmt("if", (Stmt(abrupt),))
+    tree = Stmt(loop, (Stmt("seq", (guard, guard, guard, A)),))
+    target = {"break": 3, "continue": 2, "return": 11}[abrupt]
+    shape = check_shape(tree, [
+        (0, 1), (1, 4), (4, 5), (5, target), (4, 6),
+        (6, 7), (7, target), (6, 8), (8, 10), (10, target),
+        (8, 9), (9, 2), (2, 1), (3, 11),
+        (1 if loop == "while" else 2, 3),
+    ], merge_degree=99)
+    assert len(shape.nodes) == 3 + 3 * 1 + 2 * 3
+    routed = lower_structure(tree, 2)
+    assert max(Counter(v for _, v in routed.edges).values()) <= 2
+    assert len(routed.edges) == len(set(routed.edges))
+    assert is_reducible(routed.nodes, routed.edges, entry=routed.entry)
+
+
+def test_guard_run_without_trailing_atom_keeps_joins():
+    guard = Stmt("if", (Stmt("return"),))
+    check_shape(Stmt("seq", (guard, guard)), [
+        (0, 1), (1, 2), (1, 3), (3, 7), (2, 4),
+        (4, 5), (4, 6), (6, 7), (5, 7),
+    ])
+
+
 def test_merge_router():
     # Five arms: repeatedly replace the first two sources by a new relay.
     check_shape(Stmt("switch", (A,) * 5), [
