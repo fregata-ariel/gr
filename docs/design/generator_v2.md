@@ -1,7 +1,7 @@
 # C の設計見直し: 生成器 v2 と構造 OOD マトリクス
 
 作成日: 2026-09-04
-状態: **実装完了・実験実行中**(設計: Codex GPT-6 Astra high / 実装: Codex GPT-6 Astra low、進行と判断: Claude)
+状態: **実験完了・結果記録済み(§12)**(設計: Codex GPT-6 Astra high / 実装: Codex GPT-6 Astra low、進行と判断: Claude)
 前提: B の判定(`controlled_eval.md`)— 既定構成は baseline + 参照合法マスク
 (`--ref-legal-mask`)、pointer は不採用。決定 A6-6 により窓なし pointer は C へ。
 ブランチ: `feat/generator-v2`(`feat/controlled-eval` から分岐)
@@ -208,3 +208,78 @@ balanced 18)。OOD target の窓超過除外は 2〜3 件(str2lay 2、depth 2、
 `--epochs 300 --patience 20`、診断 400 + 制約 400 サンプル)。各 source のモデルは学習後に
 OOD target の test を同 VM 上で再採点する(`rescore_c.py`)。集計は `controlled_eval`
 (--prefix c_<src>_ / c_<src>2<tgt>_、--by-bucket)。
+
+## 12. 結果(2026-09-15、n24、seed 0–2、test = 各 target の test split、`training/summarize_c.py`)
+
+実行は Colab T4 の無料枠で 3 セッションに分けた(約 1 時間で切断されるため。§11 のランナーは
+完了 run をスキップして再開できる)。集計は `runs/c_summary.md` / `runs/c_summary.json`。
+
+### ID セル(各 source の自分の test)
+
+| source | base NLL | mask NLL(paired Δ、3 seed 符号) | ptr | WF base / mask / ptr | edge acc |
+|---|---|---|---|---|---|
+| layered(v1 相当) | 0.7227 ± 0.0035 | **0.7183 ± 0.0017**(−0.0044、一致) | 0.7240(+0.0013) | 71.2 / **93.3** / 88.5% | 0.761 / 0.755 / 0.754 |
+| structured | 0.2844 ± 0.0014 | 0.2838 ± 0.0013(−0.0006、不一致) | – | 86.8 / **95.5**% | 0.915 / 0.914 |
+| structured depth1 | 0.2785 ± 0.0026 | 0.2800 ± 0.0012(+0.0014、不一致) | – | 95.0 / **98.7**% | 0.915 / 0.916 |
+| structured merge2 | 0.2978 ± 0.0011 | 0.2975 ± 0.0024(−0.0002、不一致) | – | 88.8 / **96.1**% | 0.908 / 0.907 |
+| layered balanced-k | 0.7306 ± 0.0010 | 0.7293 ± 0.0027(−0.0011、不一致) | – | 67.7 / **92.4**% | 0.749 / 0.749 |
+
+- structured 系の NLL は layered の 4 割以下(KIND / LOOP / EOS の dev NLL: 0.30 / 0.31 / 0.14
+  vs 0.77 / 0.80 / 0.21)。構成的に reducible な CFG は自己回帰的にはるかに予測しやすい。
+- mask は全 ID セルで base と同等以上、WF は +8〜+25 pt。canary(dev、base → mask)は
+  15 比較中フラグ 1 件(balanced s1 の EOS +0.18、要検証)。ptr は layered の 2 seed で
+  EOS フラグ(+0.22 / +0.18、B と同じ)。
+- 分布忠実度(制約サンプル vs test、KS 平均): layered で mask 0.07–0.08 < base 0.08–0.10、
+  structured / depth1 / balanced で同等、merge2 のみ mask 0.09 > base 0.07(要検証)。
+
+### OOD シフト(source モデルを target test で再採点、NLL/token)
+
+| source → target | base: ID → OOD(Δ) | mask: ID → OOD(Δ) | mask − base の劣化差 |
+|---|---|---|---|
+| layered → structured | 0.723 → 0.878(**+0.155**) | 0.718 → 0.836(**+0.118**) | −0.037 |
+| layered → spaghetti | 0.723 → 0.993(+0.271) | 0.718 → 0.934(+0.216) | −0.054 |
+| structured → layered | 0.284 → **4.058**(+3.77) | 0.284 → **3.800**(+3.52) | −0.258 |
+| structured → spaghetti | 0.284 → 1.557(+1.27) | 0.284 → 1.477(+1.19) | −0.079 |
+| depth1 → depth3 | 0.279 → 1.351(+1.07) | 0.280 → 1.180(+0.90) | −0.172 |
+| merge2 → merge4 | 0.298 → 0.636(+0.34) | 0.298 → 0.631(+0.33) | −0.006 |
+
+ptr(layered のみ): → structured 0.832(+0.108)、→ spaghetti 0.937(+0.213)。mask と同等だが
+seed 分散が 2〜3 倍(±0.021 / ±0.026)。
+
+### realized 特徴で層別した OOD NLL(mask、base も同傾向)
+
+- layered → structured: max_depth 1 / 2 / 3 = 0.80 / 0.80 / 0.90、max_in_degree 2 / 3 = 0.83 / 0.86。
+- layered → spaghetti: irreducible 0.95 vs reducible 0.91、depth 1→4 で 0.84 → 1.00。
+- structured → layered: irreducible 3.81 vs reducible 3.52、in_degree 2 / 3 / 4+ = 3.41 / 3.75 / 4.18、
+  mean_offset low / mid / high = 3.42 / 3.84 / 4.10。
+- structured → spaghetti: **reducible 1.13 vs irreducible 1.70**。
+- balanced-k(mean_offset 3 bin 等数で学習)の bin 別 NLL: low / mid / high = 0.636 / 0.721 / 0.831。
+  自然分布で学習した layered モデルの同 bin は 0.645 / 0.705 / 0.833 → **等数採用は bin 別の
+  難度を変えない**(参照距離の難度はサンプル頻度ではなく構造に内在する。B の token 単位の
+  頻度分析と整合)。
+
+### 判定(族 × 因子)
+
+1. **族シフトが最大の因子で、非対称**。layered(irreducible 90%)で学習したモデルは structured へ
+   +0.12〜0.16、spaghetti へ +0.22〜0.27 の劣化にとどまるが、structured で学習したモデルは
+   layered で **+3.5〜3.8** と崩壊する(未見の irreducible ループと高い合流次数)。実 CFG
+   (ほぼ reducible)へ向かう方向のシフトは「layered → structured」であり、v1 データでの学習は
+   その方向には比較的頑健。逆は成り立たないので、**学習データは irreducible / 高次数を含む
+   族を混ぜる**必要がある。
+2. **深さシフト(1 → 3)は +0.9〜1.1** と大きい。未見の入れ子深さは高コストで、depth を
+   train に含めることが必須。
+3. **合流次数シフト(2 → 3)は +0.33**、族・深さより小さい。
+4. **mask は既定として妥当**: ID で base と同等以上、すべての OOD セルで劣化幅が base より
+   小さく(−0.006〜−0.26)、WF は 92〜99%、canary はほぼ無反応。B の判定を分布シフト下でも
+   支持する。
+5. **ptr を再検討する理由は出なかった**: OOD でも mask と同等で、分散と EOS フラグが残る。C′
+   (窓なし pointer)まで保留。
+6. **balanced-k は不要**: サンプル単位の参照距離バランスは bin 別難度を変えない。
+
+### 次の候補
+
+- A7-5 の節目スイープ: family OOD(layered → structured)を n = 12, 16, 24, 32, 48 で mask / base
+  × 3 seed(30 run、無料枠なら 2〜3 セッション)。劣化幅のノード数依存を見る。
+- **混合族データ**(layered + structured [+ spaghetti])での学習を既定データ候補とし、各 target への
+  劣化が単族学習より小さいかを確認する(実 CFG 転移の準備)。
+- pyClangAST 実 CFG の接続(family OOD の「実データ」セル)。
