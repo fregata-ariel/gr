@@ -26,10 +26,11 @@ from __future__ import annotations
 import argparse
 import json
 import random
-from math import log, sqrt
+from math import isfinite, log, sqrt
 from pathlib import Path
 from statistics import mean, pstdev
 
+from cfg_reducer.model_input import build_vocab
 from training import grammar_mask
 from training.data_utils import read_jsonl
 
@@ -77,6 +78,47 @@ def paired_delta(scores: list[dict], baseline: list[dict],
     lo, hi = bootstrap_ci(deltas)
     return {"n": len(deltas), "mean_delta": mean(deltas), "ci95": [lo, hi],
             "frac_improved": sum(d < 0 for d in deltas) / len(deltas)}
+
+
+def validate_scores(rows: list[dict], token_rows: dict[str, list[int]], *,
+                    expect_ids: set[str] | None = None) -> None:
+    """Validate score traces against the canonical token vocabulary and test IDs."""
+    try:
+        actual = set(_unique_rows(rows, "score"))
+        if expect_ids is not None and actual != expect_ids:
+            raise ValueError(f"score IDs mismatch: missing={sorted(expect_ids - actual)}, "
+                             f"extra={sorted(actual - expect_ids)}")
+        ref_start = build_vocab(1)["REF_1"]
+        for row in rows:
+            sid = row["sample_id"]
+            if sid not in token_rows:
+                raise ValueError(f"unknown score sample_id: {sid}")
+            tokens, trace = token_rows[sid], row["token_nll"]
+            n = len(tokens) - 1
+            if n <= 0 or len(trace) != n or row["n_tokens"] != n:
+                raise ValueError(f"{sid}: token trace length / n_tokens mismatch")
+            nll, per_token = row["nll"], row["nll_per_token"]
+            if not all(isfinite(v) for v in [*trace, nll, per_token]):
+                raise ValueError(f"{sid}: non-finite NLL")
+            if abs(sum(trace) - nll) > 1e-3 * n:
+                raise ValueError(f"{sid}: nll does not match token_nll sum")
+            if abs(per_token - nll / n) > 1e-3:
+                raise ValueError(f"{sid}: nll_per_token mismatch")
+            metadata = [key for key in ("ref_pos", "ref_k", "ref_correct", "ref_type_nll")
+                        if key in row]
+            if metadata:
+                positions = row.get("ref_pos")
+                expected = [i for i, tok in enumerate(tokens[1:]) if tok >= ref_start]
+                if positions != expected or any(len(row[key]) != len(expected) for key in metadata):
+                    raise ValueError(f"{sid}: REF metadata length / positions mismatch")
+                if "ref_k" in row and row["ref_k"] != [tokens[i + 1] - ref_start + 1 for i in expected]:
+                    raise ValueError(f"{sid}: ref_k mismatch")
+                if any(v not in (0, 1) for v in row.get("ref_correct", [])):
+                    raise ValueError(f"{sid}: ref_correct must be binary")
+                if not all(isfinite(v) for v in row.get("ref_type_nll", [])):
+                    raise ValueError(f"{sid}: non-finite ref_type_nll")
+    except (KeyError, TypeError, OverflowError) as exc:
+        raise ValueError(f"invalid score data: {exc}") from exc
 
 
 # ── REF-level tables ─────────────────────────
@@ -221,8 +263,10 @@ def run_dir_name(prefix: str, config: str, size: int, seed: int) -> str:
 
 def evaluate_run(run_dir: Path, token_rows: dict[str, list[int]],
                  vocab: dict[str, int], max_k: int,
-                 freq: FrequencyBaselines) -> dict:
-    scores = read_jsonl(run_dir / "test_scores.jsonl")
+                 freq: FrequencyBaselines, *, scores: list[dict] | None = None) -> dict:
+    if scores is None:
+        scores = read_jsonl(run_dir / "test_scores.jsonl")
+        validate_scores(scores, token_rows, expect_ids=set(token_rows))
     recs = ref_records(token_rows, scores, vocab, max_k)
     table = by_k(recs)
     out = {
@@ -361,7 +405,7 @@ def summarize(runs_root: str | Path, prefix: str, size: int,
                 raise ValueError(f"{split} token IDs do not match index")
             all_rows.extend(rows)
         _unique_rows(all_rows, "token")
-    token_rows = {r["sample_id"]: r["tokens"] for r in test_rows}
+    token_rows = {sid: r["tokens"] for sid, r in _unique_rows(test_rows, "test token").items()}
     freq = FrequencyBaselines(read_jsonl(tokens_dir / "train.jsonl"), vocab, max_k)
 
     per_run: dict[str, dict[int, dict]] = {}
@@ -374,12 +418,9 @@ def summarize(runs_root: str | Path, prefix: str, size: int,
                     raise ValueError(f"missing scores: {run_dir / 'test_scores.jsonl'}")
                 continue
             scores = read_jsonl(run_dir / "test_scores.jsonl")
-            if index is not None:
-                actual = _unique_rows(scores, "score")
-                if set(actual) != set(token_rows):
-                    raise ValueError("score IDs must match all retained test IDs")
+            validate_scores(scores, token_rows, expect_ids=set(token_rows))
             per_run.setdefault(config, {})[seed] = evaluate_run(
-                run_dir, token_rows, vocab, max_k, freq)
+                run_dir, token_rows, vocab, max_k, freq, scores=scores)
             if index is not None:
                 scores = sorted(scores, key=lambda r: r["sample_id"])
                 enriched = [dict(r, ref_records=ref_records(token_rows, [r], vocab, max_k))

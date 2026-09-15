@@ -231,3 +231,60 @@ def test_bucket_nll_and_pairing(tmp_path, capsys, monkeypatch):
     (bundle / 'evaluation_index.json').unlink()
     with pytest.raises(FileNotFoundError):
         ce.summarize(*args, by_bucket=True)
+
+
+def _valid_score_fixture():
+    vocab = model_input.build_vocab(1)
+    tokens = _stream(vocab, ['BOS', 'KIND_ENTRY', 'KIND_LINEAR', 'REF_1', 'EOS'])
+    row = dict(sample_id='a', n_tokens=4, nll=2., nll_per_token=.5,
+               token_nll=[.5]*4, ref_pos=[2], ref_k=[1], ref_correct=[1],
+               ref_type_nll=[.2])
+    return row, {'a': tokens}
+
+
+def test_validate_scores_accepts_valid_and_optional_metadata():
+    row, tokens = _valid_score_fixture()
+    ce.validate_scores([row], tokens, expect_ids={'a'})
+    ce.validate_scores([{k: v for k, v in row.items() if not k.startswith('ref_')}], tokens)
+    ce.validate_scores([], {}, expect_ids=set())
+
+
+@pytest.mark.parametrize('change', [
+    {'token_nll': [.5]}, {'n_tokens': 3},
+    {'token_nll': [float('nan')]*4}, {'nll': float('inf')},
+    {'nll_per_token': float('nan')}, {'nll': 3.}, {'nll_per_token': 1.},
+    {'ref_pos': [0]}, {'ref_pos': []}, {'ref_k': []}, {'ref_k': [2]},
+    {'ref_correct': []}, {'ref_type_nll': []}, {'ref_type_nll': [float('inf')]},
+])
+def test_validate_scores_rejects_corruption(change):
+    row, tokens = _valid_score_fixture()
+    with pytest.raises(ValueError):
+        ce.validate_scores([dict(row, **change)], tokens)
+
+
+def test_validate_scores_rejects_missing_extra_duplicate_ids():
+    row, tokens = _valid_score_fixture()
+    with pytest.raises(ValueError, match="missing=\\['b'\\].*extra=\\['a'\\]"):
+        ce.validate_scores([row], tokens, expect_ids={'b'})
+    with pytest.raises(ValueError, match='duplicate'):
+        ce.validate_scores([row, row], tokens)
+    with pytest.raises(ValueError, match='unknown'):
+        ce.validate_scores([dict(row, sample_id='b')], tokens)
+
+
+def test_summarize_without_buckets_rejects_missing_ids(tmp_path):
+    import json
+    from training.data_utils import write_jsonl
+
+    bundle = tmp_path / 'tokens'
+    bundle.mkdir()
+    row, tokens = _valid_score_fixture()
+    (bundle / 'vocab.json').write_text(json.dumps(model_input.build_vocab(1)))
+    write_jsonl(bundle / 'train.jsonl', [{'sample_id': 'train', 'tokens': tokens['a']}])
+    write_jsonl(bundle / 'test.jsonl', [{'sample_id': sid, 'tokens': tokens['a']} for sid in ('a', 'b')])
+    for cfg, rows in [('base', [row, dict(row, sample_id='b')]), ('mask', [row])]:
+        run = tmp_path / ce.run_dir_name('c_', cfg, 24, 0)
+        run.mkdir()
+        write_jsonl(run / 'test_scores.jsonl', rows)
+    with pytest.raises(ValueError, match="missing=\\['b'\\]"):
+        ce.summarize(tmp_path, 'c_', 24, bundle, ['base', 'mask'], 'base', [0])
