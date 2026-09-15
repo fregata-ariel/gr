@@ -38,6 +38,16 @@ def prepare(dataset_dir: str | Path, out_dir: str | Path,
     if window_from is not None and window_from not in manifest["splits"]:
         raise ValueError(f"unknown split {window_from!r} for --window-from")
 
+    index: dict | None = None
+    if "selection" in manifest or any(
+        "realized" in entry or "bucket" in entry
+        for info in manifest["splits"].values() for entry in info["samples"]
+    ):
+        digest = hashlib.sha256((dataset_path / "manifest.json").read_bytes()).hexdigest()
+        index = {"version": 1,
+                 "sources": {split: digest for split in manifest["splits"]},
+                 "selection": manifest.get("selection"), "samples": {}, "exclusions": []}
+
     # Pass 1 — load every sample and find the offset window (all splits,
     # or only window_from).
     loaded: dict[str, list[tuple[dict, MetaGraph, int]]] = {}
@@ -67,7 +77,15 @@ def prepare(dataset_dir: str | Path, out_dir: str | Path,
         for entry, mg, needed in rows:
             if needed > max_offset:
                 excluded.setdefault(split_name, []).append(entry["seed"])
+                if index is not None:
+                    index["exclusions"].append({"sample_id": entry["sample_id"],
+                        "seed": entry["seed"], "split": split_name, "reason": "over_window",
+                        "needed": needed, "bucket": entry.get("bucket")})
                 continue
+            if index is not None:
+                index["samples"][entry["sample_id"]] = {
+                    "split": split_name, "bucket": entry.get("bucket"),
+                    "realized": entry.get("realized")}
             tokens = model_input.tokenize(mg, vocab)
             max_len = max(max_len, len(tokens))
             records.append({
@@ -91,6 +109,9 @@ def prepare(dataset_dir: str | Path, out_dir: str | Path,
     (out / "meta.json").write_text(
         json.dumps(meta, indent=2), encoding="utf-8"
     )
+    if index is not None:
+        (out / "evaluation_index.json").write_text(
+            json.dumps(index, indent=2, allow_nan=False), encoding="utf-8")
     return meta
 
 

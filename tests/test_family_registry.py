@@ -180,3 +180,26 @@ def test_package_import_does_not_load_dataset() -> None:
     subprocess.run([sys.executable, "-c",
                     "import cfg_reducer, sys; assert 'cfg_reducer.dataset' not in sys.modules"],
                    check=True)
+
+
+@pytest.mark.parametrize('selected', [False, True])
+def test_nonfirst_entry_rejected_before_engine_changes(tmp_path, selected):
+    from cfg_reducer.buckets import measurement_acceptor
+
+    class NonfirstEntry(Toy):
+        def generate(self, spec, rng):
+            return CFGShape(('N00', 'N01'), (('N01', 'N00'),), 'N01')
+
+    registry.register_family(NonfirstEntry())
+    spec = GeneratorSpec('toy', 2)
+    engine = GraphEngine()
+    message = r"entry 'N01' must equal nodes\[0\] 'N00'"
+    with pytest.raises(ValueError, match=message):
+        generate_cfg_v2(engine, seed=0, spec=spec)
+    assert not engine.nodes
+    assert not engine._history
+    with pytest.raises(ValueError, match=message):
+        build_dataset(tmp_path, {'test': (0, 1)},
+                      {'spec': spec_to_json(normalize_spec(spec))}, 'test',
+                      descriptor_for(spec), accept=measurement_acceptor if selected else None)
+    assert not list((tmp_path / 'test').glob('*.json'))

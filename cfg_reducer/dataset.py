@@ -25,7 +25,7 @@ from .engine import GraphEngine
 from .generate import GENERATOR_NAME, generate_cfg
 from .types import MetaGraph
 from .buckets import (AcceptHook, AcceptDecision, AcceptanceState, BucketPlan,
-                      Candidate, CFGReference)
+                      Candidate, CFGReference, invalid_features)
 from .generator_types import GenerationRejected
 
 # generator(engine, *, seed=..., **config) -> node ids
@@ -226,7 +226,7 @@ def build_dataset(
     if code is not None:
         manifest["code"] = code
     (out / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False),
+        json.dumps(manifest, indent=2, ensure_ascii=False, allow_nan=False),
         encoding="utf-8",
     )
     return manifest
@@ -329,6 +329,7 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                 engine = GraphEngine()
                 bucket = realized = duplicate_of = duplicate_dataset = None
                 reason = None
+                invalid = ()
                 try:
                     generated_nodes = desc.fn(engine, seed=seed, **config)
                 except GenerationRejected as exc:
@@ -361,6 +362,9 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                             if (decision.accepted and decision.reason is not None) or (not decision.accepted and not decision.reason):
                                 raise ValueError('inconsistent acceptance decision')
                             bucket, realized = decision.bucket, decision.realized
+                            invalid = invalid_features(realized)
+                            if invalid and reason is None:
+                                reason = 'invalid_feature'
                             if reason is None and not decision.accepted:
                                 reason = decision.reason
                         if reason is None:
@@ -380,7 +384,12 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                     row = {'seed': seed, 'split': split, 'reason': reason, 'bucket': bucket,
                            'realized': realized, 'duplicate_of': duplicate_of,
                            'duplicate_dataset': duplicate_dataset}
-                    rejected_file.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + '\n')
+                    if invalid:
+                        assert realized is not None
+                        row['realized'] = {key: None if key in invalid else value
+                                           for key, value in realized.items()}
+                        row['invalid_features'] = list(invalid)
+                    rejected_file.write(json.dumps(row, sort_keys=True, ensure_ascii=False, allow_nan=False) + '\n')
             for stats in per_bucket.values():
                 if stats['target'] is not None:
                     stats['missing'] = max(0, stats['target'] - stats['accepted'])
@@ -402,7 +411,7 @@ def _build_selected(out_dir, splits, config, version, generator, code,
         manifest[key] = sum(s[key] for s in manifest_splits.values())
     if code is not None:
         manifest['code'] = code
-    (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False), encoding='utf-8')
+    (out / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     return manifest
 
 

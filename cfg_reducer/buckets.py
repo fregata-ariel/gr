@@ -111,7 +111,15 @@ class AcceptDecision:
 AcceptHook = Callable[[Candidate, AcceptanceState], AcceptDecision]
 
 
+def invalid_features(features: Features) -> tuple[str, ...]:
+    """Return nonfinite feature names in deterministic order."""
+    return tuple(sorted(key for key, value in features.items()
+                        if isinstance(value, float) and not math.isfinite(value)))
+
+
 def bucket_for(features: Features, plan: BucketPlan) -> str:
+    if invalid_features(features):
+        raise ValueError('invalid_feature')
     labels = []
     for dim in plan.dims:
         value = features.get(dim.feature)

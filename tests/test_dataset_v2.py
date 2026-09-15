@@ -251,3 +251,24 @@ def test_load_references_version_mismatch_needs_explicit_override(tmp_path):
                                       allow_version_mismatch=True)
     assert len(refs) == 3 and all(r.nodes and r.edges for r in refs)
     assert dataset_v2.load_references((tmp_path / "a",), version="v1") == refs
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_nonfinite_realized_is_strict_json_rejection(tmp_path, accepted):
+    features = {'mean_offset': float('nan'), 'max_depth': float('inf'),
+                'min_offset': -float('inf'), 'num_nodes': 1}
+
+    def accept(candidate, state):
+        return AcceptDecision(accepted, None if accepted else 'invalid_feature', None, features)
+
+    manifest = build_dataset(tmp_path, {'test': (0, 1)}, {}, 'test', toy, accept=accept)
+    text = (tmp_path / 'rejections.jsonl').read_text()
+    assert 'NaN' not in text and 'Infinity' not in text
+    row = json.loads(text)
+    assert row['reason'] == 'invalid_feature'
+    assert row['invalid_features'] == ['max_depth', 'mean_offset', 'min_offset']
+    assert row['realized'] == dict(mean_offset=None, max_depth=None, min_offset=None, num_nodes=1)
+    assert features['max_depth'] == float('inf')  # Hook-owned values are not mutated.
+    assert manifest['splits']['test']['samples'] == []
+    assert manifest['rejected'] == 1
+    json.dumps(manifest, allow_nan=False)

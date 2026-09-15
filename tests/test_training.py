@@ -424,3 +424,64 @@ def test_prepare_cross_dataset(tmp_path):
     (source / 'manifest.json').write_text(json.dumps(source_manifest))
     with pytest.raises(ValueError, match='nonempty'):
         prepare_tokens.prepare(source, out, 'train', test_dataset=target)
+
+
+def test_single_v2_index_preserves_legacy_bundle(tmp_path):
+    import hashlib
+    from cfg_reducer.buckets import measurement_acceptor, bucket_for, default_bucket_plan
+    from training import controlled_eval as ce
+
+    ds = tmp_path / 'ds'
+    manifest = dataset.build_dataset(ds, {'train': (0, 1), 'val': (1, 3), 'test': (3, 12)},
+                                     CONFIG, 'test', accept=measurement_acceptor)
+    # Measurement-only datasets have null buckets; also exercise named buckets.
+    for info in manifest['splits'].values():
+        for entry in info['samples']:
+            entry['bucket'] = bucket_for(entry['realized'], default_bucket_plan(1))
+    manifest_path = ds / 'manifest.json'
+    for mode in ('full', 'entries', 'selection', 'legacy'):
+        current = json.loads(json.dumps(manifest))
+        if mode in ('entries', 'legacy'):
+            current.pop('selection')
+        if mode in ('selection', 'legacy'):
+            for info in current['splits'].values():
+                for entry in info['samples']:
+                    entry.pop('bucket')
+                    entry.pop('realized')
+        manifest_path.write_text(json.dumps(current))
+        for window in (None, 'train'):
+            out = tmp_path / f'{mode}_{window}'
+            prepare_tokens.prepare(ds, out, window)
+            if mode == 'legacy':
+                assert not (out / 'evaluation_index.json').exists()
+                continue
+            index = ce._read_index(out / 'evaluation_index.json')
+            assert index['selection'] == current.get('selection')
+            assert index['sources'] == dict.fromkeys(current['splits'], hashlib.sha256(manifest_path.read_bytes()).hexdigest())
+            for split, info in current['splits'].items():
+                retained = {r['sample_id'] for r in data_utils.read_jsonl(out / f'{split}.jsonl')}
+                assert retained == {sid for sid, e in index['samples'].items() if e['split'] == split}
+                for entry in info['samples']:
+                    if entry['sample_id'] in retained:
+                        assert index['samples'][entry['sample_id']] == dict(
+                            split=split, bucket=entry.get('bucket'), realized=entry.get('realized'))
+                    else:
+                        assert any(e['sample_id'] == entry['sample_id'] and e['reason'] == 'over_window'
+                                   for e in index['exclusions'])
+            runs = tmp_path / 'scores'
+            run = runs / ce.run_dir_name('test_', 'base', 8, 0)
+            run.mkdir(parents=True, exist_ok=True)
+            rows = data_utils.read_jsonl(out / 'test.jsonl')
+            assert rows
+            data_utils.write_jsonl(run / 'test_scores.jsonl', [dict(
+                sample_id=r['sample_id'], n_tokens=len(r['tokens'])-1,
+                token_nll=[1.0]*(len(r['tokens'])-1), nll=len(r['tokens'])-1,
+                nll_per_token=1.0) for r in rows])
+            report = ce.summarize(runs, 'test_', 8, out, ['base'], 'base', [0], by_bucket=True)
+            assert report['runs']['base'][0]['by_bucket']
+    for window in (None, 'train'):
+        for name in ('train.jsonl', 'val.jsonl', 'test.jsonl', 'vocab.json', 'meta.json'):
+            expected = (tmp_path / f'legacy_{window}' / name).read_bytes()
+            for mode in ('full', 'entries', 'selection'):
+                assert (tmp_path / f'{mode}_{window}' / name).read_bytes() == expected
+    assert ce._read_index(tmp_path / 'full_train/evaluation_index.json')['exclusions']

@@ -59,6 +59,7 @@ def descriptor_for(spec: GeneratorSpec) -> GeneratorDescriptor: ...
 - `descriptor_for` は `name="cfg_v2:" + spec.family`、fn は `fn(engine, *, seed: int, spec: dict[str, Json]) -> list[str]` のアダプタを返す。
 - builder に渡す config は必ず `{"spec": spec_to_json(normalize_spec(spec))}`。アダプタは受け取った spec を復元し、descriptor と family の一致を検査する。
 - `generate_cfg_v2` は空 engine を要求し、`Random(seed)` を一度だけ作って plugin に渡す。shape の ID 重複・不明端点・entry 存在を検査し、nodes 順、辞書順 edges で engine に反映する。
+- entry は nodes[0] とし、engine 変更前に共通契約として検証する。
 - nodes は配置順の `N00, N01, ...`、edges は重複なし。全ノードが entry から到達可能であることを族の契約とする（一般の重複 API は孤立ノード対応を維持）。
 - version は既存どおり CLI の `--version` または git commit。構成アルゴリズム・乱数消費を変更した版は新 version で生成する。
 - v2 の provenance は `source=synthetic, generator={name, version, seed, config}` だけ。上位 §4 の固定名案は A7-1 により族別名へ置き換える。

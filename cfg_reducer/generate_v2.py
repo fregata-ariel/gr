@@ -47,6 +47,8 @@ def _validate_shape(shape: CFGShape) -> None:
         raise ValueError("duplicate node IDs")
     if shape.entry not in nodes:
         raise ValueError("entry must exist in nodes")
+    if shape.entry != shape.nodes[0]:
+        raise ValueError(f"entry {shape.entry!r} must equal nodes[0] {shape.nodes[0]!r}")
     if len(set(shape.edges)) != len(shape.edges):
         raise ValueError("duplicate edges")
     for src, dst in shape.edges:
