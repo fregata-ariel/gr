@@ -330,3 +330,26 @@ base も同じ順位(mixed: 0.821 / 0.335 / 0.609 / 0.290 / 0.361)。
 - layered 性能を戻したい場合は重みを 2:1:1 程度に上げる(`mixture` の weight で制御可能)。
 - 次: A7-5 の節目スイープを「layered 学習 vs 混合学習 × n = 12, 16, 24, 32, 48 × mask × 3 seed」
   (30 run)で行い、劣化幅と混合の優位がノード数に依存するかを見る。
+
+## 14. 節目スイープ(A7-5): layered 学習 vs 混合学習 × ノード数(2026-09-15、進行中)
+
+設計: n ∈ {12, 16, 24, 32, 48}、各 n で layered(v1 相当)/ structured / spaghetti / mixed の dataset を
+現行 version(R2 修正後)で生成(seed 基点 700000 + i·10000、structured / spaghetti / mixed は
+layered を exclude)。source は layered と mixed、構成は mask のみ、seed 0–2。target は structured
+と spaghetti(混合は layered test にも再採点)。集計は `scratchpad/sw/sweep_summary.py`(OpenCode
+試作)→ `runs/sweep_summary_interim.md`。n12 は同型重複が多く structured test 144 / 混合 train 1631。
+
+### 中間結果(n12 / n16 / n24、mask、3 seed 平均、NLL/token)
+
+| n | layered ID | 混合 ID | layered → structured | 混合 → structured | layered → spaghetti | 混合 → spaghetti | 混合 → layered |
+|---|---|---|---|---|---|---|---|
+| 12 | 0.570 | 0.549 | 0.694 | **0.296** | 0.906 | **0.431** | 0.667(+0.097) |
+| 16 | 0.649 | 0.534 | 0.703 | **0.286** | 0.831 | **0.486** | 0.754(+0.105) |
+| 24 | 0.732 | 0.611 | 0.899 | **0.356** | 0.963 | **0.617** | 0.824(+0.092) |
+
+- 混合学習の優位(structured −0.40〜−0.54、spaghetti −0.35〜−0.48)はノード数に依存せず安定。
+  代償の layered test +0.09〜+0.10(専用モデル比)も一定。
+- WF(reference-constrained): layered 96.0 / 95.8 / 92.2%、混合 96.2 / 92.4 / 89.8%。edge accuracy は
+  混合が高い(0.82〜0.85 vs 0.76〜0.79)。
+- n32 / n48 は Colab 無料枠の GPU 割当切れ("Service Unavailable" が 2 時間継続)で未実行。
+  10 分間隔の再取得ループで待機中。結果は本節に追記する。
