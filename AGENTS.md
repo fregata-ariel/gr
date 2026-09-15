@@ -24,6 +24,9 @@ older docs, and a document's final "決定" section wins over its earlier sectio
 - Do not change `cfg_reducer/generate.py` (v1 generator), `cfg_reducer/store.py`
   (provenance / `sample_id`), or the legacy `build_dataset` path; they must stay
   byte-identical for existing datasets.
+- Any change to a generator family's algorithm or RNG consumption changes the dataset
+  `version` (the git commit). Never alter a family's output under an existing version;
+  datasets built by different commits are not mixed in one experiment.
 - Families for generator v2 are plugins: add `cfg_reducer/families/<name>.py` and one
   registration line in `families/__init__.py`; never add family branches to
   `cfg_reducer/dataset.py`, `dataset_v2.py`, or `training/controlled_eval.py`.
