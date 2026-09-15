@@ -287,3 +287,46 @@ seed 分散が 2〜3 倍(±0.021 / ±0.026)。
 2026-09-15: R2 修正により structured 族の出力が変わる。
 以後の dataset は新 version(git commit)で生成する。
 §10〜§12 と混合族実験のデータは旧 version(1439828 / 4fe5569)で生成されたもの。
+
+## 13. 混合族データでの学習(2026-09-15、n24、seed 0–2、`mixture` 族)
+
+データ: `data/c_mixed` = mixture(layered v1 相当 / structured L3 G2 / spaghetti rate .1、等重み)、
+seed 500000〜、train 2063 / val 207 / test 204(C の全 target と同型の 44 件を除外。generator
+version は R2 修正前の `4fe5569`)。成分比 train 712 / 688 / 663。bundle は `tok_c_mixed` と
+`tok_c_mix2{lay,str,spa,depth,merge}`。単族モデルの比較用に `tok_c_{lay,str}2{depth,merge}` も追加し、
+layered / structured モデルを depth3 / merge4 で再採点した。集計は `summarize_c`(strict、21 セル)。
+
+### target 別 NLL/token(mask、seed 3 本平均)
+
+| target(test) | layered 学習 | structured 学習 | depth1 学習 | merge2 学習 | **mixed 学習** |
+|---|---|---|---|---|---|
+| layered(200) | **0.718**(ID) | 3.800 | – | – | 0.813 |
+| structured(206) | 0.836 | **0.284**(ID) | – | – | 0.339 |
+| spaghetti(210) | 0.934 | 1.477 | – | – | **0.595** |
+| depth3(216) | 0.879 | **0.227** | 1.180 | – | 0.296 |
+| merge4(230) | 0.861 | **0.303** | – | 0.631 | 0.362 |
+
+base も同じ順位(mixed: 0.821 / 0.335 / 0.609 / 0.290 / 0.361)。
+
+- **混合モデルはどの target でも崩壊しない**(最悪 0.81)。専用モデルとの差は layered +0.10、
+  structured +0.06、depth3 +0.07、merge4 +0.06。spaghetti では単族のどれより大幅に良い(0.60 vs
+  0.93)。
+- 混合 ID test の成分別 NLL(mask): layered 0.83 / spaghetti 0.61 / structured 0.34。layered 成分は
+  専用モデル(0.72)より劣る = データの 1/3 しか見ていない代償。
+- depth3 / merge4 では structured(L3 G2、depth 乱択 1–3、in_degree 2–3 を自然に含む)が最良で、
+  これらの因子は「未見かどうか」が支配的(depth1 学習 → 1.18、merge2 学習 → 0.63)。
+- mask の効果(paired Δ): 混合 ID −0.010(3 seed 一致)、spaghetti −0.014(一致)、structured 系
+  target では ±0.006 で差なし(WF が元から高い)。WF は base 69.4% → mask 87.4%(混合データは
+  括弧構造が多様で、mask でも unclosed / unbalanced が残る)。
+- canary(dev、base → mask): s0 / s1 フラグなし、s2 に EOS +0.21(要検証)。混合データの EOS NLL は
+  base でも 0.46 と高く(layered 0.21、structured 0.14)、終端位置の多様性による。mask で EOS が
+  上がる傾向(0.46 → 0.52)は B の struct-pos と同じ方向で、未解明のまま記録。分布忠実度(KS)は
+  base 0.067–0.077 / mask 0.053–0.077 で同等。
+
+### 判定
+
+- 実 CFG(reducible 中心)への転移を見据えた**既定の学習データは混合族**とする。単族(特に
+  structured のみ)は未見の族で崩壊する(§12)が、混合は全 target で専用モデルの +0.1 以内。
+- layered 性能を戻したい場合は重みを 2:1:1 程度に上げる(`mixture` の weight で制御可能)。
+- 次: A7-5 の節目スイープを「layered 学習 vs 混合学習 × n = 12, 16, 24, 32, 48 × mask × 3 seed」
+  (30 run)で行い、劣化幅と混合の優位がノード数に依存するかを見る。
