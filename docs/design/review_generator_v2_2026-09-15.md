@@ -322,3 +322,15 @@ for suffix, code in (('', None), ('_code', {'commit': 'fixed', 'dirty': False}))
 AGENTS.md に明記する。同一 version での実装変更は禁止。(5) セル別 WF は source モデルの無条件
 生成 WF(モデルの性質)であり、target には条件付けない。表の見出しで明示する。(6) 詳細設計
 どおり「同じ他因子の active / ranges と除外率を併記」を基準とする。
+
+## 7. 対応記録(2026-09-15)
+
+| 指摘 | コミット | 内容 |
+|---|---|---|
+| R1 / R5 | `4a1fc9f` | `controlled_eval.validate_scores`(trace 長・有限性・nll 整合・REF メタデータ・test ID の完全一致)を全経路に適用。`summarize_c` は strict 既定、pending / error を区別、retained / raw / excluded を併記、21 セル + target 別比較表 |
+| R3 / R4 / R6 | `95ac0f2` | `entry == nodes[0]` を共通契約として強制。単一 dataset 経路でも `evaluation_index.json` を出力(token / vocab / meta はバイト不変)。manifest / sidecar を `allow_nan=False`、非有限 realized は `null` + `invalid_features` |
+| R2 | `97ce3eb` | 連続 guard の join 共有(追加 2G ノード)。structured の出力が変わるため以後の dataset は新 version。再現例は 13 ノード・100/100 成功 |
+
+いずれも Codex(gpt-6-astra、low)が実装し、進行役が pytest / ty / diff-check と再現例で受け入れた。
+残る「テストの空白」(§4)のうち、plugin 作者向け共通契約テスト・padding の出次数保存・
+反復 guard 後の atom 展開の期待辺は R2 のテスト追加で一部を担保。残りは次の実装機会に回す。
