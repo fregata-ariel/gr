@@ -331,25 +331,37 @@ base も同じ順位(mixed: 0.821 / 0.335 / 0.609 / 0.290 / 0.361)。
 - 次: A7-5 の節目スイープを「layered 学習 vs 混合学習 × n = 12, 16, 24, 32, 48 × mask × 3 seed」
   (30 run)で行い、劣化幅と混合の優位がノード数に依存するかを見る。
 
-## 14. 節目スイープ(A7-5): layered 学習 vs 混合学習 × ノード数(2026-09-15、進行中)
+## 14. 節目スイープ(A7-5): layered 学習 vs 混合学習 × ノード数(2026-09-15〜16、完了)
 
 設計: n ∈ {12, 16, 24, 32, 48}、各 n で layered(v1 相当)/ structured / spaghetti / mixed の dataset を
 現行 version(R2 修正後)で生成(seed 基点 700000 + i·10000、structured / spaghetti / mixed は
 layered を exclude)。source は layered と mixed、構成は mask のみ、seed 0–2。target は structured
 と spaghetti(混合は layered test にも再採点)。集計は `scratchpad/sw/sweep_summary.py`(OpenCode
-試作)→ `runs/sweep_summary_interim.md`。n12 は同型重複が多く structured test 144 / 混合 train 1631。
+試作)→ `runs/sweep_summary.md`。n12 は同型重複が多く structured test 144 / 混合 train 1631。
+実行先: n12〜n24 は Colab T4、n32 / n48 はローカル RTX 2080 Ti(`training/runner`、`--backend local`、
+各 run の `backend.json` に記録)。比較は同一 n 内なので実行先の違いは結論に影響しない(`compute_backend.md` §3.3)。
 
-### 中間結果(n12 / n16 / n24、mask、3 seed 平均、NLL/token)
+### 結果(mask、3 seed 平均、NLL/token)
 
 | n | layered ID | 混合 ID | layered → structured | 混合 → structured | layered → spaghetti | 混合 → spaghetti | 混合 → layered |
 |---|---|---|---|---|---|---|---|
 | 12 | 0.570 | 0.549 | 0.694 | **0.296** | 0.906 | **0.431** | 0.667(+0.097) |
 | 16 | 0.649 | 0.534 | 0.703 | **0.286** | 0.831 | **0.486** | 0.754(+0.105) |
 | 24 | 0.732 | 0.611 | 0.899 | **0.356** | 0.963 | **0.617** | 0.824(+0.092) |
+| 32 | 0.779 | 0.642 | 0.936 | **0.376** | 1.002 | **0.645** | 0.861(+0.083) |
+| 48 | 0.773 | 0.614 | 0.977 | **0.352** | 1.014 | **0.647** | 0.849(+0.075) |
 
-- 混合学習の優位(structured −0.40〜−0.54、spaghetti −0.35〜−0.48)はノード数に依存せず安定。
-  代償の layered test +0.09〜+0.10(専用モデル比)も一定。
-- WF(reference-constrained): layered 96.0 / 95.8 / 92.2%、混合 96.2 / 92.4 / 89.8%。edge accuracy は
-  混合が高い(0.82〜0.85 vs 0.76〜0.79)。
-- n32 / n48 は Colab 無料枠の GPU 割当切れ("Service Unavailable" が 2 時間継続)で未実行。
-  10 分間隔の再取得ループで待機中。結果は本節に追記する。
+- 混合学習の優位は全ノード数で保たれ、structured では n とともに広がる(−0.40 @n12 → −0.56 @n32
+  → −0.63 @n48)。spaghetti は −0.35〜−0.48 で安定。代償の layered test(専用モデル比)は
+  +0.10 → +0.08 → +0.075 と n が大きいほど小さい。
+- layered 学習の structured への shift は n とともに増える(+0.12 / +0.05 / +0.17 / +0.16 / +0.20)。
+  混合学習では structured が ID より易しい(−0.25〜−0.27、一定)。
+- WF(reference-constrained)は n とともに低下し、n48 では layered 79.6% / 混合 77.0%(n12 は 96%)。
+  両 source で同程度に落ちるので source ではなく系列長の効果。edge accuracy は混合が一貫して
+  高い(0.81〜0.85 vs 0.74〜0.79)で n に依らない。
+- 標準誤差は ID で 0.001〜0.003、OOD で最大 0.035(n48 layered→structured)。`controlled_eval` の
+  集計にカナリアのフラグは出ていない。
+- 結論: 混合族データを既定の学習データとする判断(§13)はノード数に対して頑健。次の課題は
+  n48 での WF 低下(系列長)と、混合の重みで layered の損失をさらに縮められるか(2:1:1 など)。
+- 実行先の差の確認(Q8-4): n24 s0 の layered / 混合をローカルで再学習して T4 の結果と比較する
+  (run 名 `x_s24_*`)。結果は本節末に追記。
