@@ -326,3 +326,18 @@ B の判定(案 2″ 不採用、既定 = 参照合法マスク)を受けた C �
 
 補足: 以後、全体の進行と設計判断は Claude、詳細設計は Codex(GPT-6 Astra high)、
 実装は Codex(GPT-6 Astra low)で行う。
+
+## Q8. 計算バックエンドのルーター化(優先度: 高)
+
+Colab 依存を減らすため、実行先(Colab / ローカル GPU コンテナ)をルーターで振り分ける案を
+`docs/design/compute_backend.md` にまとめた。確認結果: ローカルに RTX 2080 Ti(11 GB)、
+Docker + NVIDIA Container Toolkit があり、コンテナから GPU を認識できる。Colab 結合は
+scratchpad のシェル 21 本とラッパー 69 本に集中し、`train_ar.py` は既定パス以外は依存しない。
+
+1. 置き場所: リポジトリ `training/runner/`(テスト付き)でよいか。scratchpad のままにするか。
+2. イメージ: 公式 `pytorch/pytorch` の pin 済みタグを `Dockerfile` に置く方針でよいか。
+3. 既定の振り分け: `auto` = ローカル GPU 優先、確保できなければ Colab、でよいか。
+4. n24 s0 の 2 run をローカルで再学習し、T4 との差を記録する(再現性の確認)か。
+5. n32 / n48 はルーター完成後にルーター経由で実行(受け入れ試験)するか、最小ローカル
+   runner で先に終えるか。
+6. K8s バックエンドは同じ Protocol の 3 つ目として後回し、でよいか。
