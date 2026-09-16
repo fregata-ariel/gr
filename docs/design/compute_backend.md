@@ -3,6 +3,13 @@
 作成: 2026-09-16。状態: 設計中。判断事項は `docs/handoff_questions.md` Q8 / A8。
 決定(A8): 既定の実行先は Colab。先にルーターと現行 colab CLI フローのアダプタを作り、
 ローカル GPU コンテナのバックエンドは後続。詳細設計は `compute_backend_detailed.md`(Codex high)。
+補足(2026-09-16、ユーザー指示): 既定は Colab だが、いま実際に動かして検証できるのは
+ローカル GPU のみ。したがって (1) テストは FakeBackend だけで Colab に触れない、
+(2) コード上の既定は colab のまま、このマシンでは環境変数 `GR_BACKEND=local` で上書きする、
+(3) Docker バックエンドは Colab アダプタの直後に実装し、実機の受け入れ試験(小さな Plan の
+end-to-end)はローカルで行う。イメージは `pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime`
+(CUDA 12.6、Turing sm_75 対応)を pin する。
+
 
 ## 1. 背景
 
