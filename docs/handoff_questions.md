@@ -355,3 +355,17 @@ OpenCode(DeepSeek V4.1 Flash)で T1〜T5 を完了し、ローカル GPU で受�
 (`compute_backend.md` §5)。未回答の Q8-1, 2, 4, 5, 6 は次の仮置きで進めている(異論があれば差し替え):
 1 = `training/runner/`、2 = pin した公式 pytorch イメージ、5 = n32 / n48 はルーター経由で
 ローカル実行、4 = その後に n24 s0 の 2 run をローカルで再学習して T4 との差を記録、6 = K8s は後日。
+
+## Q9. 混合重みの実験計画(優先度: 高)
+
+`docs/design/mixture_doe.md` に混合物計画(simplex-centroid + 軸点 10 点 × 3 seed、Scheffé 二次
+モデル、実現組成で回帰、確認 run)をまとめた。
+
+1. 設計点: 10 点(頂点 3・辺中点 3・重心・軸点 3)でよいか。2:1:1 を 11 点目として含めるか、
+   確認 run に回すか(推奨: 確認 run)。
+2. 合成応答: y_bal(3 target の等重み平均)と y_max(最悪ケース)の 2 本立てでよいか。用途重みが
+   あれば指定を。
+3. REF 窓の固定: `prepare_tokens --max-offset` を追加して全設計点で共通(n24 = 20)にする、でよいか。
+4. n48 の確認: 頂点 3 + 重心 + 最適点の 5 点 × 3 seed でよいか。
+5. 分析コードで numpy(matplotlib 経由で既存)を使ってよいか。図は matplotlib で `docs/figures/` へ。
+6. データは混合族 spec(頂点は純族 spec)で生成し、pool 合成案は不採用、でよいか。
