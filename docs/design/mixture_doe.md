@@ -179,3 +179,26 @@ structured +0.047、spaghetti +0.020。
   つまり「layered の損失をどこまで許すか」の方針で重みを選ぶ問題であり、均等重視なら重心のまま、
   最悪ケース重視なら (⅔, ⅙, ⅙)、折衷なら 2:1:1 か 5:2:3。判断は Q10。
 - n48 の同傾向確認(頂点 3 + 重心 + 点 8、15 run)を 23:24 に開始。結果は §8.3。
+
+## 9. 正規化: 基準符号長と超過 NLL(2026-09-17、承認済み)
+
+族ごとに情報量が違う(n24 test: REF の割合 layered 49.5% / structured 43.6%、REF 1 個あたりの合法候補
+5.6 / 4.5 / 4.3、合法候補一様の REF 費用 0.713 / 0.548 / 0.524 nats/token、KIND 列の bigram エントロピー
+1.09 / 0.82 / 0.94)。生の NLL の族間差にはこの差が混ざるので、**モデル非依存の基準符号長**を引いた
+超過 NLL で比較する。
+
+基準(`training/info_baseline.py`、torch 非依存): 文法を知っている頻度モデル。
+- 構造トークン(KIND_* / LOOP_START / LOOP_END / EOS)は構造トークン部分列上の add-α trigram。
+- 次が REF か否かは (現在の KIND、その motif で既に出した REF 数) を条件とする頻度表。
+- REF のオフセットは `controlled_eval.FrequencyBaselines` の条件付き分布 P(k − k_last | n_legal)
+  (合法候補は `grammar_mask.legal_offsets`、窓は bundle の max_offset)。
+学習 split で当て、test を採点し、`test_scores.jsonl` と同じ行形式(token_nll 付き)で書く。
+
+2 種類の正規化を出す:
+- (i) target 固有: その族の純データ(頂点 p1 / p2 / p3 の train)で当てた基準を target test に適用。
+  族の難しさを引く定数で、単一 target の最適点は変わらないが合成応答(bal / max / min)の重みが変わる。
+- (ii) source 条件付き: 各設計点の train で当てた基準を各 target に適用。「その学習データの頻度統計
+  だけで到達できる符号長」を引き、モデルが統計以上に学習した分を見る。
+
+`mixture_doe collect --baseline-dir` で超過 NLL を応答にできるようにし、§8 の表を超過分で再掲する(§9.1)。
+ユーザー注記: より良い正規化があり得るが現時点では本方式を採用(2026-09-17)。
