@@ -95,6 +95,7 @@ class Observation:
     y: dict[str, float]
     wf: float | None
     n_train: int
+    y_raw: dict[str, float] | None = None
 
 
 def nll_per_token(scores_path: Path) -> float:
@@ -114,6 +115,48 @@ def _run_name(prefix: str, size: int, point: int, suffix: str, seed: int) -> str
     return f"{prefix}_s{size}_p{point}{suffix}_mask_n{size}_s{seed}"
 
 
+def _read_score_rows(path: Path) -> dict[str, tuple[float, int]]:
+    """Score file -> sample_id -> (nll, n_tokens), rejecting duplicates."""
+    rows: dict[str, tuple[float, int]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        sid = row["sample_id"]
+        if sid in rows:
+            raise ValueError(f"duplicate score sample_id: {sid}")
+        rows[sid] = (float(row["nll"]), int(row["n_tokens"]))
+    return rows
+
+
+def _rows_nll_per_token(rows: Mapping[str, tuple[float, int]]) -> float:
+    total_nll = sum(nll for nll, _ in rows.values())
+    total_tokens = sum(tokens for _, tokens in rows.values())
+    return total_nll / total_tokens
+
+
+def _excess_nll_per_token(
+    model_rows: Mapping[str, tuple[float, int]],
+    baseline_rows: Mapping[str, tuple[float, int]],
+) -> float:
+    """(sum model nll - sum baseline nll) / sum model n_tokens."""
+    missing = sorted(set(model_rows) - set(baseline_rows))
+    if missing:
+        raise ValueError(f"baseline missing sample_id: {missing[0]}")
+    extra = sorted(set(baseline_rows) - set(model_rows))
+    if extra:
+        raise ValueError(f"baseline has extra sample_id: {extra[0]}")
+    nll = sum(model_rows[sid][0] - baseline_rows[sid][0] for sid in model_rows)
+    tokens = sum(model_rows[sid][1] for sid in model_rows)
+    return nll / tokens
+
+
+def _baseline_name(mode: str, point: int, target: str) -> str:
+    if mode == "target":
+        return f"base_{target}.jsonl"
+    return f"base_p{point}_{target}.jsonl"
+
+
 def collect(
     runs_dir: Path,
     data_dir: Path,
@@ -122,8 +165,19 @@ def collect(
     *,
     size: int = 24,
     prefix: str = "d",
+    baseline_dir: Path | None = None,
+    baseline_mode: str = "target",
 ) -> tuple[list[Observation], list[str]]:
-    """Collect one observation per (point, seed) from a runs directory."""
+    """Collect one observation per (point, seed) from a runs directory.
+
+    With ``baseline_dir`` the response becomes the excess NLL (model
+    minus the grammar-aware frequency baseline) and ``y_raw`` keeps the
+    raw model NLL/token.  In ``target`` mode every design point shares
+    ``base_<target>.jsonl``; in ``source`` mode the baseline is fitted on
+    the point's own training split (``base_p<point>_<target>.jsonl``).
+    """
+    if baseline_mode not in ("target", "source"):
+        raise ValueError(f"unknown baseline_mode: {baseline_mode!r}")
     observations: list[Observation] = []
     missing: list[str] = []
     composition_cache: dict[int, tuple[tuple[float, float, float], int]] = {}
@@ -144,7 +198,22 @@ def collect(
             if not all(path.exists() for path in paths.values()):
                 missing.append(base)
                 continue
-            y = {target: nll_per_token(path) for target, path in paths.items()}
+            if baseline_dir is None:
+                y = {target: nll_per_token(path)
+                     for target, path in paths.items()}
+                y_raw: dict[str, float] | None = None
+            else:
+                model_rows = {target: _read_score_rows(path)
+                              for target, path in paths.items()}
+                y_raw = {target: _rows_nll_per_token(rows)
+                         for target, rows in model_rows.items()}
+                y = {}
+                for target in TARGETS:
+                    baseline_rows = _read_score_rows(
+                        baseline_dir / _baseline_name(
+                            baseline_mode, point, target))
+                    y[target] = _excess_nll_per_token(
+                        model_rows[target], baseline_rows)
             eval_path = runs_dir / base / "eval.json"
             wf: float | None = None
             if eval_path.exists():
@@ -152,7 +221,7 @@ def collect(
                     eval_path.read_text(encoding="utf-8")
                 )["well_formed_rate"])
             observations.append(
-                Observation(point, seed, x, y, wf, n_train)
+                Observation(point, seed, x, y, wf, n_train, y_raw)
             )
     return observations, missing
 
@@ -166,6 +235,7 @@ def observations_to_json(obs: Sequence[Observation]) -> str:
             "y": dict(o.y),
             "wf": o.wf,
             "n_train": o.n_train,
+            "y_raw": None if o.y_raw is None else dict(o.y_raw),
         }
         for o in obs
     ]
@@ -182,6 +252,8 @@ def observations_from_json(text: str) -> list[Observation]:
             {key: float(value) for key, value in row["y"].items()},
             None if row["wf"] is None else float(row["wf"]),
             int(row["n_train"]),
+            None if row.get("y_raw") is None
+            else {key: float(value) for key, value in row["y_raw"].items()},
         )
         for row in rows
     ]
@@ -548,19 +620,25 @@ def report(
     """Write the Markdown report and optional ternary contour figures."""
     lines: list[str] = ["# Mixture DoE report", ""]
 
+    show_raw = any(o.y_raw is not None for o in obs)
     lines.append("## 1. Observations")
     lines.append("")
-    lines.append(
-        "| point | seed | x_lay | x_str | x_spa | n_train | y_lay | y_str "
-        "| y_spa | wf |"
-    )
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    columns = ["point", "seed", "x_lay", "x_str", "x_spa", "n_train",
+               "y_lay", "y_str", "y_spa", "wf"]
+    if show_raw:
+        columns += ["raw_lay", "raw_str", "raw_spa"]
+    lines.append("| " + " | ".join(columns) + " |")
+    lines.append("| " + " | ".join("---" for _ in columns) + " |")
     for o in sorted(obs, key=lambda o: (o.point, o.seed)):
-        lines.append(
-            f"| {o.point} | {o.seed} | {o.x[0]:.3f} | {o.x[1]:.3f} | "
-            f"{o.x[2]:.3f} | {o.n_train} | {o.y['lay']:.4f} | "
-            f"{o.y['str']:.4f} | {o.y['spa']:.4f} | {_fmt(o.wf, 3)} |"
-        )
+        row = [
+            str(o.point), str(o.seed), f"{o.x[0]:.3f}", f"{o.x[1]:.3f}",
+            f"{o.x[2]:.3f}", str(o.n_train), f"{o.y['lay']:.4f}",
+            f"{o.y['str']:.4f}", f"{o.y['spa']:.4f}", _fmt(o.wf, 3),
+        ]
+        if show_raw:
+            row += ["-" if o.y_raw is None else f"{o.y_raw[target]:.4f}"
+                    for target in TARGETS]
+        lines.append("| " + " | ".join(row) + " |")
     lines.append("")
 
     by_point: dict[int, list[Observation]] = defaultdict(list)
@@ -696,6 +774,8 @@ def main(argv: list[str] | None = None) -> int:
     collect_parser.add_argument("--size", type=int, default=24)
     collect_parser.add_argument("--prefix", default="d")
     collect_parser.add_argument("--out", type=Path, required=True)
+    collect_parser.add_argument("--baseline-dir", type=Path, default=None)
+    collect_parser.add_argument("--baseline-mode", default="target")
 
     fit_parser = sub.add_parser("fit")
     fit_parser.add_argument("--obs", type=Path, required=True)
@@ -717,6 +797,7 @@ def main(argv: list[str] | None = None) -> int:
             args.runs, args.data,
             _parse_points(args.points), _parse_points(args.seeds),
             size=args.size, prefix=args.prefix,
+            baseline_dir=args.baseline_dir, baseline_mode=args.baseline_mode,
         )
         args.out.write_text(observations_to_json(observations),
                             encoding="utf-8")

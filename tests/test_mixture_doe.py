@@ -280,6 +280,111 @@ def test_observations_json_round_trip():
     assert restored == obs
 
 
+def test_observations_json_round_trip_y_raw():
+    obs = [
+        Observation(1, 0, (0.5, 0.25, 0.25),
+                    {"lay": 1.0, "str": 2.0, "spa": 3.0}, 0.9, 10,
+                    {"lay": 0.7, "str": 0.8, "spa": 0.9}),
+        Observation(1, 1, (1.0, 0.0, 0.0),
+                    {"lay": 1.0, "str": 2.0, "spa": 3.0}, None, 10),
+    ]
+    restored = observations_from_json(observations_to_json(obs))
+    assert restored == obs
+    assert restored[0].y_raw == pytest.approx(
+        {"lay": 0.7, "str": 0.8, "spa": 0.9})
+    assert restored[1].y_raw is None
+
+
+def _write_named_scores(path: Path, rows: list[tuple[str, float, int]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(
+        json.dumps({"sample_id": sid, "nll": nll, "n_tokens": n_tokens}) + "\n"
+        for sid, nll, n_tokens in rows))
+
+
+def _baseline_collect_fixture(tmp_path):
+    runs = tmp_path / "runs"
+    data = tmp_path / "data"
+    baseline = tmp_path / "baseline"
+    (data / "d24_p1").mkdir(parents=True)
+    model = {
+        "lay": [("a", 10.0, 5), ("b", 20.0, 5)],
+        "str": [("a", 15.0, 5), ("b", 25.0, 5)],
+        "spa": [("a", 25.0, 5), ("b", 25.0, 5)],
+    }
+    for target, rows in model.items():
+        suffix = "" if target == "lay" else f"2{target}"
+        _write_named_scores(
+            runs / f"d_s24_p1{suffix}_mask_n24_s0" / "test_scores.jsonl", rows)
+    for target, rows in {
+        "lay": [("a", 6.0, 5), ("b", 12.0, 5)],
+        "str": [("a", 10.0, 5), ("b", 15.0, 5)],
+        "spa": [("a", 20.0, 5), ("b", 25.0, 5)],
+    }.items():
+        _write_named_scores(baseline / f"base_{target}.jsonl", rows)
+    for target, rows in {
+        "lay": [("a", 8.0, 5), ("b", 12.0, 5)],
+        "str": [("a", 20.0, 5), ("b", 15.0, 5)],
+        "spa": [("a", 15.0, 5), ("b", 25.0, 5)],
+    }.items():
+        _write_named_scores(baseline / f"base_p1_{target}.jsonl", rows)
+    return runs, data, baseline
+
+
+def test_collect_baseline_target_and_source(tmp_path, monkeypatch):
+    runs, data, baseline = _baseline_collect_fixture(tmp_path)
+    monkeypatch.setattr(
+        mixture_doe, "realized_composition",
+        lambda dataset_dir, split="train": {
+            "layered": 4, "structured": 0, "spaghetti": 0})
+
+    target, missing = mixture_doe.collect(
+        runs, data, [1], [0], baseline_dir=baseline, baseline_mode="target")
+    assert missing == []
+    assert target[0].y == pytest.approx({"lay": 1.2, "str": 1.5, "spa": 0.5})
+    assert target[0].y_raw == pytest.approx({"lay": 3.0, "str": 4.0, "spa": 5.0})
+
+    source, _ = mixture_doe.collect(
+        runs, data, [1], [0], baseline_dir=baseline, baseline_mode="source")
+    assert source[0].y == pytest.approx({"lay": 1.0, "str": 0.5, "spa": 1.0})
+    assert source[0].y_raw == pytest.approx({"lay": 3.0, "str": 4.0, "spa": 5.0})
+
+
+def test_collect_baseline_missing_id_and_unknown_mode(tmp_path, monkeypatch):
+    runs, data, baseline = _baseline_collect_fixture(tmp_path)
+    monkeypatch.setattr(
+        mixture_doe, "realized_composition",
+        lambda dataset_dir, split="train": {
+            "layered": 4, "structured": 0, "spaghetti": 0})
+    _write_named_scores(baseline / "base_lay.jsonl", [("a", 6.0, 5)])
+    with pytest.raises(ValueError, match="missing sample_id: b"):
+        mixture_doe.collect(runs, data, [1], [0], baseline_dir=baseline,
+                            baseline_mode="target")
+    _write_named_scores(baseline / "base_lay.jsonl",
+                        [("a", 6.0, 5), ("b", 12.0, 5), ("c", 1.0, 5)])
+    with pytest.raises(ValueError, match="extra sample_id: c"):
+        mixture_doe.collect(runs, data, [1], [0], baseline_dir=baseline,
+                            baseline_mode="target")
+    with pytest.raises(ValueError, match="baseline_mode"):
+        mixture_doe.collect(runs, data, [1], [0], baseline_dir=baseline,
+                            baseline_mode="bogus")
+
+
+def test_report_adds_raw_columns_when_y_raw_present(tmp_path):
+    obs = [
+        Observation(o.point, o.seed, o.x, o.y, o.wf, o.n_train,
+                    {target: o.y[target] + 1.0 for target in TARGETS})
+        for o in synth_obs()
+    ]
+    fits = {target: fit(obs, target) for target in TARGETS}
+    composites = {c: optimize(fits, c) for c in COMPOSITES}
+    out_md = tmp_path / "report.md"
+    report(obs, fits, composites, out_md, ref_point=7)
+    text = out_md.read_text()
+    for column in ("raw_lay", "raw_str", "raw_spa"):
+        assert column in text
+
+
 def test_report_and_figures(tmp_path):
     obs = synth_obs()
     fits = {target: fit(obs, target) for target in TARGETS}
