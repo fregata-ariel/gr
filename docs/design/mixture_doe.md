@@ -1,6 +1,6 @@
 # 混合重みの実験計画(混合物計画 + Scheffé 多項式)
 
-作成: 2026-09-16。状態: 提案(判断事項は `docs/handoff_questions.md` Q9)。
+作成: 2026-09-16。状態: 承認(A9)、実行中。判断事項は `docs/handoff_questions.md` Q9 / A9。
 前提: `generator_v2.md` §13〜§14(混合族データ = 既定候補、優位はノード数に頑健)、
 `compute_backend.md`(実行はローカル GPU、ルーター経由)。
 
@@ -19,7 +19,7 @@ test の損失 +0.075〜+0.10 が代償。2:1:1 のような点を場当たり�
 | 副因子 | seed(学習 seed 0–2、ブロック)。n は 24 を主、48 は確認(§5) |
 | 固定 | 学習データの試行数 2150(受理 ≈ 2144、n24)、val 220、REF 窓 `max_offset`(設計点で共通)、構成 mask、epochs 300 / patience 20、sample-seed 1000+seed |
 | 応答 | 固定 test 3 種(`data/s24_{layered,structured,spaghetti}` の test、全設計点で同一行)の NLL/token: y_lay, y_str, y_spa。副応答: WF(reference-constrained)、edge accuracy |
-| 合成応答 | y_bal = (y_lay + y_str + y_spa) / 3(均等重視)、y_max = max(y_lay, y_str, y_spa)(最悪ケース)。用途重みを変えた合成も同じ当てはめから計算できる |
+| 合成応答 | y_bal = (y_lay + y_str + y_spa) / 3(均等重視)、y_max = max(...)(最悪ケース)、y_min = min(...)(最良ケース、A9-2)。用途重みを変えた合成も同じ当てはめから計算できる |
 
 固定条件の根拠: REF 窓は現状 `--window-from train` で学習 split から決まり、設計点ごとに
 19 / 20(n24)のように変わる。test 行の窓外除外は 0 なので test 自体は同一だが、モデル形状
@@ -77,5 +77,16 @@ n48 でも順位を保つかを見る(§14 の「優位は n に頑健」の重�
 | T2 | `training/mixture_doe.py`: 設計点 → spec JSON / runner Plan の生成、実現組成、Scheffé 当てはめ、格子最適化、Markdown + 図 | OpenCode(設計は本書) |
 | T3 | データ生成(10 dataset + bundle 40)、Plan 実行(ローカル、ルーター)、分析、`generator_v2.md` §15 に記録 | Claude |
 
-Run 名: `d_s24_p<点番号>_mask_n24_s<seed>`、再スコア `d_s24_p<点>2{lay,str,spa}_mask_n24_s<seed>`。
+Run 名: `d_s24_p<点番号>_mask_n24_s<seed>`、再スコア `d_s24_p<点>2{str,spa}_mask_n24_s<seed>`。
+データ: `data/d24_p<点>`(train 800000–802150、val 802150–802370、test 802370–802400 は未使用、
+3 test dataset を exclude、seed 範囲は全点共通 = 共通乱数)。bundle は点ごとに 3 つ
+(`tok_d24_p<点>_{lay,str,spa}`、`--test-dataset` で test を固定 test に差し替え、`--max-offset 20`)。
+学習 bundle は `_lay` なので `runs/<run>/test_scores.jsonl` がそのまま y_lay、再スコアは str / spa の 2 件。
+
+## 7. 今後の転用(A9-4)
+
+この実験系を他の因子(モデル構成、生成パラメタ)に転用する際は、固定設計点ではなく
+全パターン空間から乱択・適応的に点を選ぶベイズ的な方法(逐次設計)を原則とする。本計画の
+分析モジュールは設計点を固定せず「観測した組成 → 応答」の任意集合を当てはめる作りにして、
+逐次設計に置き換えられるようにする。
 所要: データ生成 15 分、学習 + 再スコア 2 h、確認 run 30 分、n48 1.5 h。
