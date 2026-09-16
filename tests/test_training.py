@@ -6,6 +6,8 @@ import json
 import random
 from pathlib import Path
 
+import pytest
+
 from cfg_reducer import GraphEngine, dataset, model_input, store
 from cfg_reducer.generate import generate_cfg
 from training import data_utils, eval_samples, grammar_mask, prepare_tokens
@@ -337,10 +339,114 @@ def test_prepare_tokens_window_from_train_only(tmp_path):
         len(v["samples"]) for v in manifest["splits"].values())
 
 
+def test_prepare_tokens_max_offset_larger_than_natural_window(tmp_path):
+    ds, _, natural = _prepare(tmp_path)
+    target = natural["max_offset"] + 2
+
+    out = tmp_path / "fixed"
+    meta = prepare_tokens.prepare(ds, out, max_offset=target)
+
+    assert meta["max_offset"] == target
+    assert meta["max_offset_fixed"] is True
+    assert "window_from" not in meta
+    assert meta["excluded_over_window"] == {}
+    vocab = json.loads((out / "vocab.json").read_text())
+    refs = sorted((t for t in vocab if t.startswith("REF_")),
+                  key=lambda t: int(t[4:]))
+    assert refs == [f"REF_{k}" for k in range(1, target + 1)]
+    assert len(refs) == target
+
+
+def test_prepare_tokens_max_offset_excludes_over_window_rows(tmp_path):
+    ds = tmp_path / "ds"
+    dataset.build_dataset(
+        ds, {"train": (0, 4), "val": (4, 14), "test": (14, 24)},
+        {"num_nodes": 10, "edge_prob": 0.3}, version="test",
+    )
+    manifest = json.loads((ds / "manifest.json").read_text())
+
+    def needed(split, sid):
+        return model_input.max_offset_needed(
+            store.load_sample(ds / split / f"{sid}.json"))
+
+    out = tmp_path / "fixed"
+    meta = prepare_tokens.prepare(ds, out, max_offset=1)
+    assert meta["max_offset"] == 1
+    assert meta["max_offset_fixed"] is True
+    vocab = json.loads((out / "vocab.json").read_text())
+    assert sorted(t for t in vocab if t.startswith("REF_")) == ["REF_1"]
+
+    excluded_total = 0
+    for split in ("train", "val", "test"):
+        entries = manifest["splits"][split]["samples"]
+        expect_excluded = sorted(e["seed"] for e in entries
+                                 if needed(split, e["sample_id"]) > 1)
+        got = meta["excluded_over_window"].get(split, {"count": 0, "seeds": []})
+        assert sorted(got["seeds"]) == expect_excluded
+        assert got["count"] == len(expect_excluded)
+        rows = data_utils.read_jsonl(out / f"{split}.jsonl")
+        assert len(rows) == len(entries) - len(expect_excluded)
+        assert meta["splits"][split] == len(rows)
+        assert all(needed(split, r["sample_id"]) <= 1 for r in rows)
+        excluded_total += len(expect_excluded)
+    assert excluded_total > 0
+
+
+def test_prepare_tokens_max_offset_validation(tmp_path):
+    ds = tmp_path / "ds"
+    dataset.build_dataset(ds, {"train": (0, 4)}, CONFIG, version="test")
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        prepare_tokens.prepare(ds, tmp_path / "both", window_from="train",
+                               max_offset=3)
+    with pytest.raises(ValueError, match="must be >= 1"):
+        prepare_tokens.prepare(ds, tmp_path / "zero", max_offset=0)
+
+
+def _toy_cross_engine(engine, *, seed):
+    n = {0: 3, 1: 4, 2: 5, 10: 2, 11: 6, 12: 20}[seed]
+    nodes = [str(i) for i in range(n)]
+    for node in nodes:
+        engine.add_node(node)
+    for a, b in zip(nodes, nodes[1:]):
+        engine.add_edge(a, b)
+    if seed == 11:
+        engine.add_edge(nodes[0], nodes[-1])
+    return nodes
+
+
+def test_prepare_cross_dataset_with_max_offset(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    dataset.build_dataset(source, {"train": (0, 1), "val": (1, 2)},
+                          {}, "test", _toy_cross_engine)
+    target_manifest = dataset.build_dataset(target, {"test": (10, 13)},
+                                            {}, "test", _toy_cross_engine)
+    out = tmp_path / "out"
+    meta = prepare_tokens.prepare(source, out, test_dataset=target, max_offset=1)
+
+    assert meta["max_offset"] == 1
+    assert meta["window_from"] == "fixed"
+    assert meta["max_offset_fixed"] is True
+    target_ids = {e["sample_id"]
+                  for e in target_manifest["splits"]["test"]["samples"]}
+    rows = data_utils.read_jsonl(out / "test.jsonl")
+    assert rows
+    assert {r["sample_id"] for r in rows} <= target_ids
+    assert meta["excluded_over_window"]["test"] == {"count": 1, "seeds": [11]}
+
+
+def test_prepare_cross_dataset_without_window_or_max_offset_raises(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    dataset.build_dataset(source, {"train": (0, 1), "val": (1, 2)},
+                          {}, "test", _toy_cross_engine)
+    dataset.build_dataset(target, {"test": (10, 13)}, {}, "test", _toy_cross_engine)
+    with pytest.raises(ValueError, match="requires"):
+        prepare_tokens.prepare(source, tmp_path / "out", test_dataset=target)
+
+
 def test_prepare_cross_dataset(tmp_path):
     import hashlib
     import shutil
-    import pytest
     from cfg_reducer.buckets import (AcceptDecision, bucket_for, default_bucket_plan,
                                      measurement_acceptor)
 
