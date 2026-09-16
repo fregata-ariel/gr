@@ -26,10 +26,11 @@ from __future__ import annotations
 import argparse
 import json
 import random
-from math import log, sqrt
+from math import isfinite, log, sqrt
 from pathlib import Path
 from statistics import mean, pstdev
 
+from cfg_reducer.model_input import build_vocab
 from training import grammar_mask
 from training.data_utils import read_jsonl
 
@@ -77,6 +78,47 @@ def paired_delta(scores: list[dict], baseline: list[dict],
     lo, hi = bootstrap_ci(deltas)
     return {"n": len(deltas), "mean_delta": mean(deltas), "ci95": [lo, hi],
             "frac_improved": sum(d < 0 for d in deltas) / len(deltas)}
+
+
+def validate_scores(rows: list[dict], token_rows: dict[str, list[int]], *,
+                    expect_ids: set[str] | None = None) -> None:
+    """Validate score traces against the canonical token vocabulary and test IDs."""
+    try:
+        actual = set(_unique_rows(rows, "score"))
+        if expect_ids is not None and actual != expect_ids:
+            raise ValueError(f"score IDs mismatch: missing={sorted(expect_ids - actual)}, "
+                             f"extra={sorted(actual - expect_ids)}")
+        ref_start = build_vocab(1)["REF_1"]
+        for row in rows:
+            sid = row["sample_id"]
+            if sid not in token_rows:
+                raise ValueError(f"unknown score sample_id: {sid}")
+            tokens, trace = token_rows[sid], row["token_nll"]
+            n = len(tokens) - 1
+            if n <= 0 or len(trace) != n or row["n_tokens"] != n:
+                raise ValueError(f"{sid}: token trace length / n_tokens mismatch")
+            nll, per_token = row["nll"], row["nll_per_token"]
+            if not all(isfinite(v) for v in [*trace, nll, per_token]):
+                raise ValueError(f"{sid}: non-finite NLL")
+            if abs(sum(trace) - nll) > 1e-3 * n:
+                raise ValueError(f"{sid}: nll does not match token_nll sum")
+            if abs(per_token - nll / n) > 1e-3:
+                raise ValueError(f"{sid}: nll_per_token mismatch")
+            metadata = [key for key in ("ref_pos", "ref_k", "ref_correct", "ref_type_nll")
+                        if key in row]
+            if metadata:
+                positions = row.get("ref_pos")
+                expected = [i for i, tok in enumerate(tokens[1:]) if tok >= ref_start]
+                if positions != expected or any(len(row[key]) != len(expected) for key in metadata):
+                    raise ValueError(f"{sid}: REF metadata length / positions mismatch")
+                if "ref_k" in row and row["ref_k"] != [tokens[i + 1] - ref_start + 1 for i in expected]:
+                    raise ValueError(f"{sid}: ref_k mismatch")
+                if any(v not in (0, 1) for v in row.get("ref_correct", [])):
+                    raise ValueError(f"{sid}: ref_correct must be binary")
+                if not all(isfinite(v) for v in row.get("ref_type_nll", [])):
+                    raise ValueError(f"{sid}: non-finite ref_type_nll")
+    except (KeyError, TypeError, OverflowError) as exc:
+        raise ValueError(f"invalid score data: {exc}") from exc
 
 
 # ── REF-level tables ─────────────────────────
@@ -221,15 +263,17 @@ def run_dir_name(prefix: str, config: str, size: int, seed: int) -> str:
 
 def evaluate_run(run_dir: Path, token_rows: dict[str, list[int]],
                  vocab: dict[str, int], max_k: int,
-                 freq: FrequencyBaselines) -> dict:
-    scores = read_jsonl(run_dir / "test_scores.jsonl")
+                 freq: FrequencyBaselines, *, scores: list[dict] | None = None) -> dict:
+    if scores is None:
+        scores = read_jsonl(run_dir / "test_scores.jsonl")
+        validate_scores(scores, token_rows, expect_ids=set(token_rows))
     recs = ref_records(token_rows, scores, vocab, max_k)
     table = by_k(recs)
     out = {
         "run": run_dir.name,
         "test_nll_per_token": (sum(r["nll"] for r in scores)
-                               / sum(r["n_tokens"] for r in scores)),
-        "test_nll_per_sample_mean": mean(r["nll_per_token"] for r in scores),
+                               / sum(r["n_tokens"] for r in scores)) if scores else None,
+        "test_nll_per_sample_mean": mean(r["nll_per_token"] for r in scores) if scores else None,
         "ref_nll_by_k": table,
         "ref_offset_nll_by_k": offset_by_k(recs),
         "ref_nll_macro_micro": macro_micro(table),
@@ -246,14 +290,122 @@ def evaluate_run(run_dir: Path, token_rows: dict[str, list[int]],
     return out
 
 
+def _unique_rows(rows: list[dict], label: str) -> dict[str, dict]:
+    result = {}
+    for row in rows:
+        sid = row["sample_id"]
+        if sid in result:
+            raise ValueError(f"duplicate {label} sample_id: {sid}")
+        result[sid] = row
+    return result
+
+
+def _read_index(path: Path) -> dict:
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate index key: {key}")
+            result[key] = value
+        return result
+    index = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+    if index["version"] != 1:
+        raise ValueError("unsupported evaluation index version")
+    excluded = _unique_rows(index.get("exclusions", []), "exclusion")
+    if set(excluded) & set(index["samples"]):
+        raise ValueError("index sample is both retained and excluded")
+    return index
+
+
+def _bucket(row: dict) -> str:
+    value = row.get("bucket")
+    return value if value is not None else "__unmeasured__"
+
+
+def bucket_scores(scores: list[dict], index: dict) -> dict[str, dict]:
+    """Aggregate complete test scores. Optional ref_records carry REF-level data.
+
+    Raw trainer scores also work: ref_pos indexes token_nll and ref_correct.
+    Excluded test rows define empty buckets and the raw denominator.
+    """
+    test = {sid: row for sid, row in index["samples"].items() if row["split"] == "test"}
+    scored = _unique_rows(scores, "score")
+    if set(scored) != set(test):
+        raise ValueError("score IDs must match all retained test IDs")
+    groups: dict[str, list[dict]] = {}
+    raw: dict[str, int] = {}
+    for sid in sorted(test):
+        name = _bucket(test[sid])
+        groups.setdefault(name, []).append(scored[sid])
+        raw[name] = raw.get(name, 0) + 1
+    for row in index.get("exclusions", []):
+        if row["split"] == "test":
+            name = _bucket(row)
+            groups.setdefault(name, [])
+            raw[name] = raw.get(name, 0) + 1
+    # Plans enumerate even buckets with no generated samples.
+    plan = (index.get("selection") or {}).get("plans", {}).get("test")
+    if plan and "dims" in plan:
+        from itertools import product
+        dims = plan["dims"]
+        labels = plan.get("active")
+        if labels is None:
+            labels = product(*(dim["labels"] for dim in dims))
+        for row in labels:
+            name = "|".join(f"{dim['feature']}={label}" for dim, label in zip(dims, row))
+            groups.setdefault(name, [])
+            raw.setdefault(name, 0)
+    result = {}
+    for name, rows in sorted(groups.items()):
+        n_tokens = sum(r["n_tokens"] for r in rows)
+        values = [r["nll_per_token"] for r in rows]
+        refs = []
+        for r in rows:
+            if "ref_records" in r:
+                refs.extend(r["ref_records"])
+            else:
+                correctness = dict(zip(r.get("ref_pos", []), r.get("ref_correct", [])))
+                refs.extend({"nll": r["token_nll"][pos], "correct": correctness.get(pos)}
+                            for pos in r.get("ref_pos", []))
+        correct = [r["correct"] for r in refs if r["correct"] is not None]
+        result[name] = {
+            "n_samples": len(rows), "n_tokens": n_tokens, "raw": raw[name],
+            "retained": len(rows), "excluded": raw[name] - len(rows),
+            "retained_rate": len(rows) / raw[name] if raw[name] else None,
+            "nll_per_token": sum(r["nll"] for r in rows) / n_tokens if n_tokens else None,
+            "nll_per_sample_mean": mean(values) if values else None,
+            "ci95": list(bootstrap_ci(values, seed=0)) if values else None,
+            "ref_nll": mean(r["nll"] for r in refs) if refs else None,
+            "edge_accuracy": mean(correct) if correct else None,
+        }
+    return result
+
+
+def _seed_stats(values: list[float]) -> dict:
+    return {"mean": mean(values) if values else None,
+            "sd": pstdev(values) if values else None, "per_seed": values}
+
+
 def summarize(runs_root: str | Path, prefix: str, size: int,
               tokens_dir: str | Path, configs: list[str], baseline: str,
-              seeds: list[int]) -> dict:
+              seeds: list[int], *, by_bucket: bool = False) -> dict:
     runs_root, tokens_dir = Path(runs_root), Path(tokens_dir)
     vocab = json.loads((tokens_dir / "vocab.json").read_text(encoding="utf-8"))
     max_k = max(int(t[4:]) for t in vocab if t.startswith("REF_"))
-    token_rows = {r["sample_id"]: r["tokens"]
-                  for r in read_jsonl(tokens_dir / "test.jsonl")}
+    test_rows = read_jsonl(tokens_dir / "test.jsonl")
+    index = None
+    if by_bucket:
+        index = _read_index(tokens_dir / "evaluation_index.json")
+        all_rows = []
+        for split in ("train", "val", "test"):
+            rows = test_rows if split == "test" else read_jsonl(tokens_dir / f"{split}.jsonl")
+            actual = _unique_rows(rows, split)
+            expected = {sid for sid, r in index["samples"].items() if r["split"] == split}
+            if set(actual) != expected:
+                raise ValueError(f"{split} token IDs do not match index")
+            all_rows.extend(rows)
+        _unique_rows(all_rows, "token")
+    token_rows = {sid: r["tokens"] for sid, r in _unique_rows(test_rows, "test token").items()}
     freq = FrequencyBaselines(read_jsonl(tokens_dir / "train.jsonl"), vocab, max_k)
 
     per_run: dict[str, dict[int, dict]] = {}
@@ -262,20 +414,31 @@ def summarize(runs_root: str | Path, prefix: str, size: int,
         for seed in seeds:
             run_dir = runs_root / run_dir_name(prefix, config, size, seed)
             if not (run_dir / "test_scores.jsonl").exists():
+                if by_bucket:
+                    raise ValueError(f"missing scores: {run_dir / 'test_scores.jsonl'}")
                 continue
+            scores = read_jsonl(run_dir / "test_scores.jsonl")
+            validate_scores(scores, token_rows, expect_ids=set(token_rows))
             per_run.setdefault(config, {})[seed] = evaluate_run(
-                run_dir, token_rows, vocab, max_k, freq)
-            scores_cache[(config, seed)] = read_jsonl(run_dir / "test_scores.jsonl")
+                run_dir, token_rows, vocab, max_k, freq, scores=scores)
+            if index is not None:
+                scores = sorted(scores, key=lambda r: r["sample_id"])
+                enriched = [dict(r, ref_records=ref_records(token_rows, [r], vocab, max_k))
+                            for r in scores]
+                per_run[config][seed]["by_bucket"] = bucket_scores(enriched, index)
+            scores_cache[(config, seed)] = scores
 
     summary: dict[str, dict] = {}
     for config, by_seed in per_run.items():
-        nlls = [r["test_nll_per_token"] for r in by_seed.values()]
+        nlls = [r["test_nll_per_token"] for r in by_seed.values()
+                if r["test_nll_per_token"] is not None]
         accs = [r["edge_accuracy"]["overall"] for r in by_seed.values()
                 if r["edge_accuracy"]["overall"] is not None]
         entry = {
             "seeds": sorted(by_seed),
             "wf_kind": WF_KIND.get(config, "unknown"),
-            "test_nll_per_token": {"mean": mean(nlls), "sd": pstdev(nlls) if len(nlls) > 1 else 0.0,
+            "test_nll_per_token": {"mean": mean(nlls) if nlls else None,
+                                   "sd": pstdev(nlls) if nlls else None,
                                    "per_seed": nlls},
             "edge_accuracy": {"mean": mean(accs) if accs else None, "per_seed": accs},
         }
@@ -284,7 +447,7 @@ def summarize(runs_root: str | Path, prefix: str, size: int,
             entry["wf"] = {"mean": mean(w["rate"] for w in wfs),
                            "per_seed": [w["rate"] for w in wfs],
                            "ci95_per_seed": [w["ci95"] for w in wfs]}
-        if config != baseline and baseline in per_run:
+        if config != baseline and baseline in per_run and token_rows:
             deltas = {}
             for seed in by_seed:
                 if (baseline, seed) in scores_cache:
@@ -296,6 +459,34 @@ def summarize(runs_root: str | Path, prefix: str, size: int,
                     "per_seed": deltas, "mean": mean(means),
                     "all_same_sign": all(m < 0 for m in means) or all(m > 0 for m in means),
                 }
+        if index is not None:
+            buckets = {}
+            for name in next(iter(by_seed.values()))["by_bucket"]:
+                runs = {seed: r["by_bucket"][name] for seed, r in by_seed.items()}
+                bucket_entry = {key: _seed_stats([r[key] for r in runs.values()
+                                                  if r[key] is not None])
+                                for key in ("n_samples", "n_tokens", "nll_per_token",
+                                            "nll_per_sample_mean", "ref_nll", "edge_accuracy")}
+                for key in ("raw", "retained", "excluded", "retained_rate"):
+                    bucket_entry[key] = next(iter(runs.values()))[key]
+                deltas = {}
+                if config != baseline:
+                    for seed in by_seed:
+                        if (baseline, seed) not in scores_cache:
+                            continue
+                        rows = [r for r in scores_cache[(config, seed)]
+                                if _bucket(index["samples"][r["sample_id"]]) == name]
+                        base = [r for r in scores_cache[(baseline, seed)]
+                                if _bucket(index["samples"][r["sample_id"]]) == name]
+                        delta = paired_delta(rows, base) if rows else {
+                            "n": 0, "mean_delta": None, "ci95": None, "frac_improved": None}
+                        deltas[seed] = delta
+                        runs[seed]["paired_delta_vs_baseline"] = delta
+                    bucket_entry["paired_delta_vs_baseline"] = {
+                        **_seed_stats([d["mean_delta"] for d in deltas.values()
+                                       if d["mean_delta"] is not None]), "per_seed": deltas}
+                buckets[name] = bucket_entry
+            entry["by_bucket"] = buckets
         summary[config] = entry
 
     return {"size": size, "prefix": prefix, "baseline": baseline,
@@ -307,7 +498,8 @@ def print_summary(rep: dict) -> None:
     print(f"# n{rep['size']}  test n={rep['n_test']}  baseline={rep['baseline']}")
     for config, e in rep["summary"].items():
         nll = e["test_nll_per_token"]
-        line = f"{config:10s} test NLL {nll['mean']:.4f} ±{nll['sd']:.4f} (seeds {e['seeds']})"
+        nll_text = f"{nll['mean']:.4f} ±{nll['sd']:.4f}" if nll['mean'] is not None else "n/a"
+        line = f"{config:10s} test NLL {nll_text} (seeds {e['seeds']})"
         if e["edge_accuracy"]["mean"] is not None:
             line += f"  edge acc {e['edge_accuracy']['mean']:.3f}"
         if "wf" in e:
@@ -316,6 +508,13 @@ def print_summary(rep: dict) -> None:
         if pd:
             line += f"  paired ΔNLL {pd['mean']:+.4f} (same sign: {pd['all_same_sign']})"
         print(line)
+        for name, bucket in e.get("by_bucket", {}).items():
+            nll = bucket["nll_per_token"]["mean"]
+            acc = bucket["edge_accuracy"]["mean"]
+            nll_text = f"{nll:.4f}" if nll is not None else "n/a"
+            acc_text = f"{acc:.3f}" if acc is not None else "n/a"
+            print(f"    {name}: retained {bucket['retained']}/{bucket['raw']}"
+                  f"  NLL {nll_text}  edge acc {acc_text}")
     for config, by_seed in rep["runs"].items():
         first = by_seed[min(by_seed)]
         fb = first["frequency_baselines"]
@@ -342,11 +541,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--baseline", default="base")
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--out", default=None)
+    parser.add_argument("--by-bucket", action="store_true")
     args = parser.parse_args(argv)
 
     rep = summarize(args.runs, args.prefix, args.size, args.tokens,
                     args.configs.split(","), args.baseline,
-                    [int(s) for s in args.seeds.split(",")])
+                    [int(s) for s in args.seeds.split(",")], by_bucket=args.by_bucket)
     if args.out:
         Path(args.out).write_text(json.dumps(rep, indent=2, ensure_ascii=False),
                                   encoding="utf-8")

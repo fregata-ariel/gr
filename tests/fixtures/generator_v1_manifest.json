@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "generate_cfg",
+    "version": "fixture",
+    "config": {
+      "num_nodes": 8,
+      "edge_prob": 0.3
+    }
+  },
+  "splits": {
+    "train": {
+      "seed_range": [
+        0,
+        4
+      ],
+      "kept": 4,
+      "dropped_duplicates": 0,
+      "samples": [
+        {
+          "seed": 0,
+          "sample_id": "cb423ec2-cb42-5270-b611-b1fe450a92f7"
+        },
+        {
+          "seed": 1,
+          "sample_id": "6c766186-9c97-5cfa-bee5-5d009ba31172"
+        },
+        {
+          "seed": 2,
+          "sample_id": "ffa6b25d-f323-57a8-8d31-8a4cf295a2cc"
+        },
+        {
+          "seed": 3,
+          "sample_id": "47f3eb0b-7644-5b32-90c3-a4d47a05fc43"
+        }
+      ],
+      "dropped": []
+    },
+    "val": {
+      "seed_range": [
+        4,
+        6
+      ],
+      "kept": 2,
+      "dropped_duplicates": 0,
+      "samples": [
+        {
+          "seed": 4,
+          "sample_id": "9e6b6439-5f09-53c3-ac17-e4a2852132d9"
+        },
+        {
+          "seed": 5,
+          "sample_id": "536b9d40-6957-599f-aab8-8ec0e78c6cc9"
+        }
+      ],
+      "dropped": []
+    }
+  }
+}

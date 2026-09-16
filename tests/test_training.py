@@ -6,6 +6,8 @@ import json
 import random
 from pathlib import Path
 
+import pytest
+
 from cfg_reducer import GraphEngine, dataset, model_input, store
 from cfg_reducer.generate import generate_cfg
 from training import data_utils, eval_samples, grammar_mask, prepare_tokens
@@ -335,3 +337,257 @@ def test_prepare_tokens_window_from_train_only(tmp_path):
     assert meta_all["max_offset"] >= meta["max_offset"]
     assert sum(meta_all["splits"].values()) == sum(
         len(v["samples"]) for v in manifest["splits"].values())
+
+
+def test_prepare_tokens_max_offset_larger_than_natural_window(tmp_path):
+    ds, _, natural = _prepare(tmp_path)
+    target = natural["max_offset"] + 2
+
+    out = tmp_path / "fixed"
+    meta = prepare_tokens.prepare(ds, out, max_offset=target)
+
+    assert meta["max_offset"] == target
+    assert meta["max_offset_fixed"] is True
+    assert "window_from" not in meta
+    assert meta["excluded_over_window"] == {}
+    vocab = json.loads((out / "vocab.json").read_text())
+    refs = sorted((t for t in vocab if t.startswith("REF_")),
+                  key=lambda t: int(t[4:]))
+    assert refs == [f"REF_{k}" for k in range(1, target + 1)]
+    assert len(refs) == target
+
+
+def test_prepare_tokens_max_offset_excludes_over_window_rows(tmp_path):
+    ds = tmp_path / "ds"
+    dataset.build_dataset(
+        ds, {"train": (0, 4), "val": (4, 14), "test": (14, 24)},
+        {"num_nodes": 10, "edge_prob": 0.3}, version="test",
+    )
+    manifest = json.loads((ds / "manifest.json").read_text())
+
+    def needed(split, sid):
+        return model_input.max_offset_needed(
+            store.load_sample(ds / split / f"{sid}.json"))
+
+    out = tmp_path / "fixed"
+    meta = prepare_tokens.prepare(ds, out, max_offset=1)
+    assert meta["max_offset"] == 1
+    assert meta["max_offset_fixed"] is True
+    vocab = json.loads((out / "vocab.json").read_text())
+    assert sorted(t for t in vocab if t.startswith("REF_")) == ["REF_1"]
+
+    excluded_total = 0
+    for split in ("train", "val", "test"):
+        entries = manifest["splits"][split]["samples"]
+        expect_excluded = sorted(e["seed"] for e in entries
+                                 if needed(split, e["sample_id"]) > 1)
+        got = meta["excluded_over_window"].get(split, {"count": 0, "seeds": []})
+        assert sorted(got["seeds"]) == expect_excluded
+        assert got["count"] == len(expect_excluded)
+        rows = data_utils.read_jsonl(out / f"{split}.jsonl")
+        assert len(rows) == len(entries) - len(expect_excluded)
+        assert meta["splits"][split] == len(rows)
+        assert all(needed(split, r["sample_id"]) <= 1 for r in rows)
+        excluded_total += len(expect_excluded)
+    assert excluded_total > 0
+
+
+def test_prepare_tokens_max_offset_validation(tmp_path):
+    ds = tmp_path / "ds"
+    dataset.build_dataset(ds, {"train": (0, 4)}, CONFIG, version="test")
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        prepare_tokens.prepare(ds, tmp_path / "both", window_from="train",
+                               max_offset=3)
+    with pytest.raises(ValueError, match="must be >= 1"):
+        prepare_tokens.prepare(ds, tmp_path / "zero", max_offset=0)
+
+
+def _toy_cross_engine(engine, *, seed):
+    n = {0: 3, 1: 4, 2: 5, 10: 2, 11: 6, 12: 20}[seed]
+    nodes = [str(i) for i in range(n)]
+    for node in nodes:
+        engine.add_node(node)
+    for a, b in zip(nodes, nodes[1:]):
+        engine.add_edge(a, b)
+    if seed == 11:
+        engine.add_edge(nodes[0], nodes[-1])
+    return nodes
+
+
+def test_prepare_cross_dataset_with_max_offset(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    dataset.build_dataset(source, {"train": (0, 1), "val": (1, 2)},
+                          {}, "test", _toy_cross_engine)
+    target_manifest = dataset.build_dataset(target, {"test": (10, 13)},
+                                            {}, "test", _toy_cross_engine)
+    out = tmp_path / "out"
+    meta = prepare_tokens.prepare(source, out, test_dataset=target, max_offset=1)
+
+    assert meta["max_offset"] == 1
+    assert meta["window_from"] == "fixed"
+    assert meta["max_offset_fixed"] is True
+    target_ids = {e["sample_id"]
+                  for e in target_manifest["splits"]["test"]["samples"]}
+    rows = data_utils.read_jsonl(out / "test.jsonl")
+    assert rows
+    assert {r["sample_id"] for r in rows} <= target_ids
+    assert meta["excluded_over_window"]["test"] == {"count": 1, "seeds": [11]}
+
+
+def test_prepare_cross_dataset_without_window_or_max_offset_raises(tmp_path):
+    source, target = tmp_path / "source", tmp_path / "target"
+    dataset.build_dataset(source, {"train": (0, 1), "val": (1, 2)},
+                          {}, "test", _toy_cross_engine)
+    dataset.build_dataset(target, {"test": (10, 13)}, {}, "test", _toy_cross_engine)
+    with pytest.raises(ValueError, match="requires"):
+        prepare_tokens.prepare(source, tmp_path / "out", test_dataset=target)
+
+
+def test_prepare_cross_dataset(tmp_path):
+    import hashlib
+    import shutil
+    from cfg_reducer.buckets import (AcceptDecision, bucket_for, default_bucket_plan,
+                                     measurement_acceptor)
+
+    def toy(engine, *, seed):
+        n = {0: 3, 1: 4, 2: 5, 10: 2, 11: 6, 12: 20}[seed]
+        nodes = [str(i) for i in range(n)]
+        for node in nodes:
+            engine.add_node(node)
+        for a, b in zip(nodes, nodes[1:]):
+            engine.add_edge(a, b)
+        if seed == 11:
+            engine.add_edge(nodes[0], nodes[-1])
+        return nodes
+
+    def measured(candidate, state):
+        decision = measurement_acceptor(candidate, state)
+        return AcceptDecision(True, None,
+                              bucket_for(decision.realized, default_bucket_plan(1)),
+                              decision.realized)
+
+    source, target = tmp_path / 'source', tmp_path / 'target'
+    dataset.build_dataset(source, {'train': (0, 1), 'val': (1, 2), 'test': (2, 3)},
+                          {}, 'test', toy)
+    manifest = dataset.build_dataset(target, {'test': (10, 13)}, {}, 'test', toy,
+                                     accept=measured)
+    # Neither source test nor target train/val needs to be readable.
+    shutil.rmtree(source / 'test')
+    old = tmp_path / 'old'
+    # Legacy train-window vocabulary is identical, even with a different test.
+    dataset.build_dataset(tmp_path / 'legacy', {'train': (0, 1), 'val': (1, 2)},
+                          {}, 'test', toy)
+    legacy = prepare_tokens.prepare(tmp_path / 'legacy', old, 'train')
+    out = tmp_path / 'out'
+    meta = prepare_tokens.prepare(source, out, 'train', test_dataset=target)
+    assert (out / 'vocab.json').read_bytes() == (old / 'vocab.json').read_bytes()
+    assert meta['max_offset'] == 1
+    assert meta['max_len'] == 7 and meta['sequence_capacity'] == 14
+    assert legacy['max_len'] == 9  # old API still uses validation lengths
+    index = json.loads((out / 'evaluation_index.json').read_text())
+    assert index['sources']['train'] == hashlib.sha256((source / 'manifest.json').read_bytes()).hexdigest()
+    assert index['sources']['test'] == hashlib.sha256((target / 'manifest.json').read_bytes()).hexdigest()
+    assert index['selection'] == manifest['selection']
+    assert {e['seed']: e['reason'] for e in index['exclusions']} == {
+        11: 'over_window', 12: 'over_length'}
+    assert index['exclusions'] == meta['exclusions']
+    assert meta['excluded_over_window'] == {'test': {'count': 1, 'seeds': [11]}}
+    retained = data_utils.read_jsonl(out / 'test.jsonl')
+    assert [r['seed'] for r in retained] == [10]
+    for entry in manifest['splits']['test']['samples']:
+        sid = entry['sample_id']
+        if entry['seed'] == 10:
+            assert index['samples'][sid] == dict(split='test', bucket=entry['bucket'],
+                                                realized=entry['realized'])
+        else:
+            assert sid not in index['samples']
+    counts = meta['counts']['test']
+    assert (counts['raw'], counts['retained'], counts['excluded']) == (3, 1, 2)
+    for key in ('raw', 'retained', 'excluded'):
+        assert sum(b[key] for b in counts['by_bucket'].values()) == counts[key]
+    with pytest.raises(ValueError, match='requires'):
+        prepare_tokens.prepare(source, out, test_dataset=target)
+    with pytest.raises(ValueError, match='requires'):
+        prepare_tokens.prepare(source, out, 'val', test_dataset=target)
+    manifest['splits']['test']['samples'].append(manifest['splits']['test']['samples'][0])
+    (target / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='duplicate'):
+        prepare_tokens.prepare(source, out, 'train', test_dataset=target)
+    manifest['splits']['test']['samples'].pop()
+    for entry in manifest['splits']['test']['samples']:
+        entry.pop('bucket')
+        entry.pop('realized')
+    manifest.pop('selection')
+    (target / 'manifest.json').write_text(json.dumps(manifest))
+    prepare_tokens.prepare(source, out, 'train', test_dataset=target)
+    old_index = json.loads((out / 'evaluation_index.json').read_text())
+    assert old_index['selection'] is None
+    assert all(r['bucket'] is r['realized'] is None for r in old_index['samples'].values())
+
+    source_manifest = json.loads((source / 'manifest.json').read_text())
+    source_manifest['splits']['train']['samples'] = []
+    (source / 'manifest.json').write_text(json.dumps(source_manifest))
+    with pytest.raises(ValueError, match='nonempty'):
+        prepare_tokens.prepare(source, out, 'train', test_dataset=target)
+
+
+def test_single_v2_index_preserves_legacy_bundle(tmp_path):
+    import hashlib
+    from cfg_reducer.buckets import measurement_acceptor, bucket_for, default_bucket_plan
+    from training import controlled_eval as ce
+
+    ds = tmp_path / 'ds'
+    manifest = dataset.build_dataset(ds, {'train': (0, 1), 'val': (1, 3), 'test': (3, 12)},
+                                     CONFIG, 'test', accept=measurement_acceptor)
+    # Measurement-only datasets have null buckets; also exercise named buckets.
+    for info in manifest['splits'].values():
+        for entry in info['samples']:
+            entry['bucket'] = bucket_for(entry['realized'], default_bucket_plan(1))
+    manifest_path = ds / 'manifest.json'
+    for mode in ('full', 'entries', 'selection', 'legacy'):
+        current = json.loads(json.dumps(manifest))
+        if mode in ('entries', 'legacy'):
+            current.pop('selection')
+        if mode in ('selection', 'legacy'):
+            for info in current['splits'].values():
+                for entry in info['samples']:
+                    entry.pop('bucket')
+                    entry.pop('realized')
+        manifest_path.write_text(json.dumps(current))
+        for window in (None, 'train'):
+            out = tmp_path / f'{mode}_{window}'
+            prepare_tokens.prepare(ds, out, window)
+            if mode == 'legacy':
+                assert not (out / 'evaluation_index.json').exists()
+                continue
+            index = ce._read_index(out / 'evaluation_index.json')
+            assert index['selection'] == current.get('selection')
+            assert index['sources'] == dict.fromkeys(current['splits'], hashlib.sha256(manifest_path.read_bytes()).hexdigest())
+            for split, info in current['splits'].items():
+                retained = {r['sample_id'] for r in data_utils.read_jsonl(out / f'{split}.jsonl')}
+                assert retained == {sid for sid, e in index['samples'].items() if e['split'] == split}
+                for entry in info['samples']:
+                    if entry['sample_id'] in retained:
+                        assert index['samples'][entry['sample_id']] == dict(
+                            split=split, bucket=entry.get('bucket'), realized=entry.get('realized'))
+                    else:
+                        assert any(e['sample_id'] == entry['sample_id'] and e['reason'] == 'over_window'
+                                   for e in index['exclusions'])
+            runs = tmp_path / 'scores'
+            run = runs / ce.run_dir_name('test_', 'base', 8, 0)
+            run.mkdir(parents=True, exist_ok=True)
+            rows = data_utils.read_jsonl(out / 'test.jsonl')
+            assert rows
+            data_utils.write_jsonl(run / 'test_scores.jsonl', [dict(
+                sample_id=r['sample_id'], n_tokens=len(r['tokens'])-1,
+                token_nll=[1.0]*(len(r['tokens'])-1), nll=len(r['tokens'])-1,
+                nll_per_token=1.0) for r in rows])
+            report = ce.summarize(runs, 'test_', 8, out, ['base'], 'base', [0], by_bucket=True)
+            assert report['runs']['base'][0]['by_bucket']
+    for window in (None, 'train'):
+        for name in ('train.jsonl', 'val.jsonl', 'test.jsonl', 'vocab.json', 'meta.json'):
+            expected = (tmp_path / f'legacy_{window}' / name).read_bytes()
+            for mode in ('full', 'entries', 'selection'):
+                assert (tmp_path / f'{mode}_{window}' / name).read_bytes() == expected
+    assert ce._read_index(tmp_path / 'full_train/evaluation_index.json')['exclusions']
