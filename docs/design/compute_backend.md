@@ -1,6 +1,8 @@
 # 計算バックエンドの抽象化(Colab / ローカル GPU コンテナ)
 
-作成: 2026-09-16。状態: 提案(判断事項は `docs/handoff_questions.md` Q8)。
+作成: 2026-09-16。状態: 設計中。判断事項は `docs/handoff_questions.md` Q8 / A8。
+決定(A8): 既定の実行先は Colab。先にルーターと現行 colab CLI フローのアダプタを作り、
+ローカル GPU コンテナのバックエンドは後続。詳細設計は `compute_backend_detailed.md`(Codex high)。
 
 ## 1. 背景
 
