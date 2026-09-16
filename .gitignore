@@ -13,6 +13,9 @@ wheels/
 data/
 runs/
 
+# Local Docker backend staging directory
+.runner_staging/
+
 # Environmetal Speciific files
 .DS_Store
 *.log
