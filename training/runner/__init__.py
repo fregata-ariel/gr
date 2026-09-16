@@ -2,7 +2,7 @@
 
 T1 surface: plan types, JSON (de)serialisation, remote script generation,
 and the milestone sweep builder. T2 adds the ``Backend`` contract and the
-Colab CLI adapter.
+Colab CLI adapter. T3 adds the local Docker adapter and the test doubles.
 """
 
 from .backend import (
@@ -16,6 +16,8 @@ from .backend import (
     run_command,
 )
 from .colab import ColabBackend, ColabTimeouts
+from .docker import DockerBackend
+from .fake import DryRunBackend, FakeBackend
 from .plans import sweep_block, sweep_plan
 from .scripts import rescore_jobs, rescore_script, train_wrapper
 from .types import (
@@ -37,6 +39,9 @@ __all__ = [
     "ColabTimeouts",
     "CommandResult",
     "CommandRunner",
+    "DockerBackend",
+    "DryRunBackend",
+    "FakeBackend",
     "Plan",
     "RemoteFailure",
     "RescoreJob",

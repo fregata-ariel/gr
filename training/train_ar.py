@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 from pathlib import Path
 
@@ -544,12 +545,13 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
 # ── main ─────────────────────────────────────
 
 def build_parser():
+    root = os.environ.get("GR_ROOT", "/content")
     parser = argparse.ArgumentParser(description="Train the AR baseline.")
-    parser.add_argument("--train", default="/content/train.jsonl")
-    parser.add_argument("--val", default="/content/val.jsonl")
-    parser.add_argument("--vocab", default="/content/vocab.json")
-    parser.add_argument("--meta", default="/content/meta.json")
-    parser.add_argument("--out", default="/content/run1")
+    parser.add_argument("--train", default=f"{root}/train.jsonl")
+    parser.add_argument("--val", default=f"{root}/val.jsonl")
+    parser.add_argument("--vocab", default=f"{root}/vocab.json")
+    parser.add_argument("--meta", default=f"{root}/meta.json")
+    parser.add_argument("--out", default=f"{root}/run1")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--patience", type=int, default=0,
                         help="early stop after N epochs without val "
