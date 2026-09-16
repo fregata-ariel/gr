@@ -349,3 +349,9 @@ scratchpad のシェル 21 本とラッパー 69 本に集中し、`train_ar.py`
 順序: まずルーターと、現行実装(colab CLI による upload / exec / download フロー)との
 アダプタを構築する。ローカル GPU コンテナのバックエンドはその後。
 1, 2, 4, 5, 6 は未回答。1 は提案どおり `training/runner/` で進める(異論があれば後で移す)。
+
+補足(2026-09-16 夕、Claude): Codex が利用上限(9/21 まで)のため、詳細設計は Claude、実装は
+OpenCode(DeepSeek V4.1 Flash)で T1〜T5 を完了し、ローカル GPU で受け入れ試験に合格した
+(`compute_backend.md` §5)。未回答の Q8-1, 2, 4, 5, 6 は次の仮置きで進めている(異論があれば差し替え):
+1 = `training/runner/`、2 = pin した公式 pytorch イメージ、5 = n32 / n48 はルーター経由で
+ローカル実行、4 = その後に n24 s0 の 2 run をローカルで再学習して T4 との差を記録、6 = K8s は後日。

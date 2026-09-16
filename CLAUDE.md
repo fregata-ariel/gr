@@ -24,6 +24,8 @@ cfg_reducer/
 main.py          — Interactive matplotlib visualizer (imports generate_cfg)
 training/        — AR baseline: local tokenize/eval (cfg_reducer, no torch),
                    Colab trainer train_ar.py (torch only, single file)
+  runner/        — compute backend router: Plan JSON -> Colab CLI or local Docker GPU
+                   (stdlib only; docs/design/compute_backend*.md)
 docs/            — Discussion logs and design notes
 tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
@@ -55,6 +57,15 @@ MetaGraph invariants, verification commands, and open design decisions.
 `/home/user/Projects/Compiler/pyClangAST/` — C/C++ AST parser (`calisp`) for building
 real CFG training corpora. Read-only reference; not modified from this project.
 
+## Compute backends
+
+Experiments run through `python -m training.runner` (design: `docs/design/compute_backend.md`).
+The default backend is `colab`; on this machine set `GR_BACKEND=local` to use the RTX 2080 Ti
+via Docker (image `pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime`, staging `.runner_staging/`).
+Always `run --dry-run` a new Plan first. A run is done iff `runs/<name>/test_scores.jsonl`
+exists; `runs/<name>/backend.json` records where it ran. Do not run `colab` commands by hand
+while a runner is active (it serialises them through `~/.cache/gr-runner/colab.lock`).
+
 ## Delegation
 
 Rules that delegated agents must follow are in `AGENTS.md` (both Codex and OpenCode
@@ -73,6 +84,7 @@ here (`uv run pytest -q`, `uv run ty check`, `git diff --check`) before it is co
   checkout's `data/` and `runs/` make its init hang) and always under `timeout`.
   Read-only generation: `opencode run --pure --agent plan -m <model> --dir /tmp/oc-wt --
   "<prompt>"`; bounded edits: `--agent build --auto` in the worktree, then review the
-  diff. Never put backticks in the message or an attached file — `opencode run` stalls
+  diff. Commit in the worktree (detached HEAD), then advance the branch from the main
+  checkout with `git merge --ff-only <sha>` — merging inside the worktree is a no-op. Never put backticks in the message or an attached file — `opencode run` stalls
   silently on them. A run that produces no output within a few minutes is a stall:
   retry once.

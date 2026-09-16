@@ -1,8 +1,9 @@
 # 計算バックエンド・ルーター詳細設計(`training/runner/`)
 
 作成: 2026-09-16。概要と決定は `compute_backend.md`、`handoff_questions.md` Q8 / A8。
-状態: 設計確定(実装タスク §9)。Codex が利用上限のため、本設計は Claude が執筆し、
-実装は OpenCode(bounded なタスク)または Claude が行う。本書の §10「決定」が上位節より優先。
+状態: T1〜T5 実装済み、T6 受け入れ試験合格(2026-09-16、`compute_backend.md` §5)。Codex が利用上限
+のため、本設計は Claude が執筆し、実装は OpenCode(DeepSeek V4.1 Flash)がタスク単位で行い、
+各結果を本セッションで検証した。本書の §10「決定」が上位節より優先。
 
 ## 0. 目的(このプログラムに要求していること)
 
@@ -327,3 +328,14 @@ uv run python -m training.runner sweep --sizes 12,16,24,32,48 [--sources lay,mix
   を付けたときだけ。
 - D6 学習コードもステージング経由で置く(マウントで見せない)。Colab と Docker で
   Executor の手順を完全に共有するため。
+
+## 11. 実装記録
+
+- 設計からの差分: `Router.reacquire` の種別切替候補は `order()` ではなく `KINDS` 全体から探す
+  (方針 colab/local でも `--allow-backend-switch` が効くように修正)。`DryRunBackend` は
+  `training/runner/fake.py` に同居。`PlanExecutor` はブロックが完了済みでも `stage_code` を行う
+  (コード 2 ファイルの put のみ)。
+- 既知の挙動: ローカル評価(`eval_samples`)の JSON が標準出力に流れる(シェル版と同じ)。
+  `RemoteFailure` 後の再試行では同ブロックのバンドルを再ステージングする(シェル版と同じ)。
+- テスト: `tests/test_runner_{types,scripts,colab,docker,fake,router,executor,cli}.py`。
+  `GR_SWEEP_WRAPPERS=<dir>` を与えると既存ラッパー 30 本との byte 比較も実行する(合格済み)。

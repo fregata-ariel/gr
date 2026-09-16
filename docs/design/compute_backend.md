@@ -1,6 +1,6 @@
 # 計算バックエンドの抽象化(Colab / ローカル GPU コンテナ)
 
-作成: 2026-09-16。状態: 設計中。判断事項は `docs/handoff_questions.md` Q8 / A8。
+作成: 2026-09-16。状態: 実装済み(§5)。判断事項は `docs/handoff_questions.md` Q8 / A8。
 決定(A8): 既定の実行先は Colab。先にルーターと現行 colab CLI フローのアダプタを作り、
 ローカル GPU コンテナのバックエンドは後続。詳細設計は `compute_backend_detailed.md`(Codex high)。
 補足(2026-09-16、ユーザー指示): 既定は Colab だが、いま実際に動かして検証できるのは
@@ -102,3 +102,35 @@ GPU が変わると数値は一致しない(CUDA カーネル・アーキテク�
 代替: 先に最小のローカル runner(既存ラッパーを `/work` を `/content` に見せる
 マウントで流す)で n32 / n48 を今日中に終え、その後ルーターを作る。結果は早いが
 使い捨てが増える。
+
+## 5. 実装状況(2026-09-16)
+
+`training/runner/` として T1〜T5 を実装した(コミット 65aebbd, 0a58efd, f52a40a, 77fd4f3,
+0bf2b79)。Codex が利用上限のため、詳細設計は Claude、実装は OpenCode(DeepSeek V4.1 Flash、
+タスクごとに本セッションで pytest / ty / diff --check とコードレビュー)。標準ライブラリのみ、
+テスト 702 件は Colab にも Docker にも触れない。
+
+受け入れ試験(T6): n12 の小 Plan(学習 2 run × 2 epoch + 再スコア 2 件)を
+`PlanExecutor` + `DockerBackend` でローカル RTX 2080 Ti 上に実行し、終了コード 0、
+所要 20 秒、6 出力ファイル + `eval.json` + `backend.json`(GPU 名・イメージ digest)を確認。
+再実行は全件 skip(冪等)。n32 / n48 の Plan は dry-run で PUT/RUN/GET/EVAL 198 行、`runs/` 無変更。
+
+使い方:
+
+```
+uv run python -m training.runner sweep --sizes 32,48 --out plan.json      # Plan を生成
+uv run python -m training.runner run --plan plan.json --dry-run           # 実行先に触れず確認
+GR_BACKEND=local uv run python -m training.runner run --plan plan.json    # ローカル GPU
+uv run python -m training.runner run --plan plan.json --backend colab --session sw
+```
+
+環境変数: `GR_BACKEND`(colab | local | auto、既定 colab)、`GR_DOCKER_IMAGE`(既定
+`pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime`)、`GR_ROOT`(コンテナ内で runner が設定)。
+ステージング dir は `<repo>/.runner_staging`(gitignore)。ローカル GPU は flock で 1 Plan 専有、
+colab CLI は runner 内で直列化される。
+
+残作業: n32 / n48 を `--backend local` で実行し `generator_v2.md` §14 を完成(実行先の違いは
+`backend.json` に記録、§3.3 の注記どおり比較は同一 n 内)。n24 s0 の 2 run をローカルで再学習し
+T4 との差を記録(Q8-4)。Colab アダプタの実機確認は割当が戻り次第。scratchpad の
+`sweep_loop.sh` 系はルーターに置き換え済みとして以後使わない。K8s バックエンドは同じ Protocol の
+3 つ目として後日。
