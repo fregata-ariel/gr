@@ -66,6 +66,14 @@ Always `run --dry-run` a new Plan first. A run is done iff `runs/<name>/test_sco
 exists; `runs/<name>/backend.json` records where it ran. Do not run `colab` commands by hand
 while a runner is active (it serialises them through `~/.cache/gr-runner/colab.lock`).
 
+## Dev environment backup
+
+`tools/devenv/` holds the manifest-driven generation backup (`backup.sh`, installed by `install.sh` as a
+daily systemd user timer to `/mnt/data/backups/gr`) and `restore.sh`, which relocates the checkout and the
+Claude Code session to a new project path (Coder migration). Scope and procedure: `docs/devenv.md`.
+The manifest's per-session entries (file-history, session-env, the `/tmp` scratchpad) name the session id;
+update them when the session changes, then re-run `install.sh`.
+
 ## Delegation
 
 Rules that delegated agents must follow are in `AGENTS.md` (both Codex and OpenCode

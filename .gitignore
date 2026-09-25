@@ -31,3 +31,6 @@ runs/
 *.iml
 *.sublime-project
 *.sublime-workspace
+
+# Machine-specific backup settings (see tools/devenv/env.sh.example)
+tools/devenv/env.sh

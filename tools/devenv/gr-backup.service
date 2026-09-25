@@ -1,0 +1,6 @@
+[Unit]
+Description=gr dev-environment backup (backup.sh now)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/gr-devenv/backup.sh now

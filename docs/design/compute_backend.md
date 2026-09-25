@@ -129,8 +129,10 @@ uv run python -m training.runner run --plan plan.json --backend colab --session 
 ステージング dir は `<repo>/.runner_staging`(gitignore)。ローカル GPU は flock で 1 Plan 専有、
 colab CLI は runner 内で直列化される。
 
-残作業: n32 / n48 を `--backend local` で実行し `generator_v2.md` §14 を完成(実行先の違いは
-`backend.json` に記録、§3.3 の注記どおり比較は同一 n 内)。n24 s0 の 2 run をローカルで再学習し
-T4 との差を記録(Q8-4)。Colab アダプタの実機確認は割当が戻り次第。scratchpad の
-`sweep_loop.sh` 系はルーターに置き換え済みとして以後使わない。K8s バックエンドは同じ Protocol の
-3 つ目として後日。
+残作業の記録: n32 / n48 の `--backend local` 実行と `generator_v2.md` §14、n24 s0 のローカル再学習と
+T4 との比較(Q8-4)は 2026-09-16 に完了。Colab アダプタの実機確認は 2026-09-26 に完了:
+受け入れ Plan `accept_colab_n12`(学習 2 run + 再スコア 2 件、既定バックエンド colab、T4)が
+セッション確保から `RUN-DONE` まで 1.5 分で通り、`backend.json` に `kind: colab / gpu: T4` が記録され、
+終了後にセッションは自動解放された(`colab sessions` に残らない)。colab CLI は 0.6.0 で検証
+(0.7.2 への更新は再試験してから)。scratchpad の `sweep_loop.sh` 系はルーターに置き換え済みとして
+以後使わない。K8s バックエンドは同じ Protocol の 3 つ目として後日。
