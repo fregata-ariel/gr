@@ -339,6 +339,27 @@ def test_lock_is_held_during_commands(tmp_path: Path) -> None:
     assert observed == [True]
 
 
+def test_session_commands_take_the_session_lock_not_the_global_one(tmp_path: Path) -> None:
+    global_lock = tmp_path / "cache" / "colab.lock"
+    observed: list[tuple[bool, bool]] = []
+
+    def held(path: Path) -> bool:
+        with open(path, "a", encoding="utf-8") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            return False
+
+    runner = FakeRunner([CommandResult(0, "ok\n")], on_call=lambda: observed.append(
+        (held(global_lock), held(tmp_path / "cache" / "colab-sw.lock"))))
+    backend = make_backend(runner, tmp_path)
+    backend.put(tmp_path / "x", "/content/x")
+    assert backend.session_lock_path == tmp_path / "cache" / "colab-sw.lock"
+    assert observed == [(False, True)]
+
+
 # --- default run_command -----------------------------------------------------
 
 def test_run_command_captures_echo() -> None:

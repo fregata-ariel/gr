@@ -71,18 +71,31 @@ class ColabBackend:
         self._sleep = sleep
         self.log = log
 
+    @property
+    def session_lock_path(self) -> Path:
+        """Lock for commands that only touch this session (upload / download / exec).
+
+        The global lock serialises ``new`` / ``stop`` / ``sessions`` across every
+        runner (the session table is shared); commands bound to one session
+        take a per-session lock instead, so up to three Plans (the Colab Pro
+        limit) can run concurrently under different ``--session`` names.
+        """
+        return self.lock_path.with_name(f"{self.lock_path.stem}-{self.session}{self.lock_path.suffix}")
+
     @contextmanager
-    def _lock(self) -> Iterator[None]:
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.lock_path, "a", encoding="utf-8") as lock_file:
+    def _lock(self, path: Path | None = None) -> Iterator[None]:
+        path = self.lock_path if path is None else path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
                 yield
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
-    def _run_locked(self, argv: Sequence[str], timeout_s: int) -> CommandResult:
-        with self._lock():
+    def _run_locked(self, argv: Sequence[str], timeout_s: int, *,
+                    session_scope: bool = False) -> CommandResult:
+        with self._lock(self.session_lock_path if session_scope else None):
             return self._run_command(argv, timeout_s)
 
     @staticmethod
@@ -147,6 +160,7 @@ class ColabBackend:
         result = self._run_locked(
             ["colab", "upload", "-s", self.session, str(local), remote],
             self.timeouts.upload,
+            session_scope=True,
         )
         if result.returncode != 0:
             self._raise_for_failure(result.output)
@@ -155,6 +169,7 @@ class ColabBackend:
         result = self._run_locked(
             ["colab", "download", "-s", self.session, remote, str(local)],
             self.timeouts.download,
+            session_scope=True,
         )
         if "not found" in result.output.lower():
             return False
@@ -172,6 +187,7 @@ class ColabBackend:
                 "--timeout", str(self.timeouts.exec_inner),
             ],
             timeout_s if timeout_s else self.timeouts.exec_outer,
+            session_scope=True,
         )
         if result.returncode != 0 or "lost" in result.output.lower():
             self._raise_for_failure(result.output)

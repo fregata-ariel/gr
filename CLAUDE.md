@@ -65,7 +65,9 @@ The default backend is `colab`; on this machine set `GR_BACKEND=local` to use th
 via Docker (image `pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime`, staging `.runner_staging/`).
 Always `run --dry-run` a new Plan first. A run is done iff `runs/<name>/test_scores.jsonl`
 exists; `runs/<name>/backend.json` records where it ran. Do not run `colab` commands by hand
-while a runner is active (it serialises them through `~/.cache/gr-runner/colab.lock`).
+while a runner is active unless you take its lock (`flock ~/.cache/gr-runner/colab.lock colab ...`);
+`new`/`stop`/`sessions` use that global lock, per-session commands use `colab-<session>.lock`.
+Colab Pro allows 3 concurrent sessions: run parallel Plans with distinct `--session` names.
 
 ## Dev environment backup
 

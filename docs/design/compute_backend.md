@@ -156,7 +156,9 @@ T4 との比較(Q8-4)は 2026-09-16 に完了。Colab アダプタの実機確�
 - **ランナーへの含意**: ColabBackend は `colab exec` の間もグローバルロックを握るため、セッション名を分けても
   Plan を並列に流せない(exec が直列化される)。CLI 自身が `sessions.json.lock` で状態ファイルを保護している
   ので、グローバルロックは `new` / `stop` / `sessions` に限定し、`exec` / `upload` / `download` はセッション別
-  ロックにすれば、3 セッション(例: 最終 3 seed を 3 本同時)まで並列化できる。実装は別タスク(要テスト)。
+  ロックにすれば、3 セッション(例: 最終 3 seed を 3 本同時)まで並列化できる。同日実装: `put` / `get` / `run` は
+  `~/.cache/gr-runner/colab-<session>.lock`、`new` / `stop` / `sessions` は従来のグローバルロック(テスト付き)。
+  並列に流すときは Plan ごとに `--session` を分ける。
 - CU の照会手順: `HOME=<token のコピーを置いた隔離 HOME> uvx --from google-colab-cli==0.7.2 colab usage`
   (0.7.2 が token.json を書き換えても 0.6.0 側に影響しないようにするため。隔離 HOME は `~/.cache/gr-runner/`
   配下でバックアップ対象外)。
