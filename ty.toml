@@ -1,0 +1,3 @@
+# ty configuration (kept outside pyproject.toml, which carries uncommitted local dev deps)
+[src]
+exclude = ["experiments/"]   # Colab-era wrappers and scripts that import torch / train_ar (records, not code under test)
