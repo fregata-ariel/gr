@@ -1,0 +1,101 @@
+{
+  "blocks": [
+    {
+      "rescore": [],
+      "source_bundle": "data/tok_pretrain_n48",
+      "train": [
+        {
+          "constrained_samples": 2,
+          "epochs": 2,
+          "extra": [
+            "--pos",
+            "sinusoidal",
+            "--pos-table-len",
+            "4096",
+            "--ref-legal-mask",
+            "--length-buckets",
+            "--max-len",
+            "0",
+            "--ref-diagnostics",
+            "--wf-probes",
+            "0",
+            "--d-model",
+            "128",
+            "--num-layers",
+            "4",
+            "--nhead",
+            "4",
+            "--dim-feedforward",
+            "512"
+          ],
+          "name": "pretrain_pilot_sinusoidal_s0",
+          "num_samples": 2,
+          "patience": 0,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 2,
+          "epochs": 2,
+          "extra": [
+            "--pos",
+            "alibi",
+            "--pos-table-len",
+            "4096",
+            "--ref-legal-mask",
+            "--length-buckets",
+            "--max-len",
+            "0",
+            "--ref-diagnostics",
+            "--wf-probes",
+            "0",
+            "--d-model",
+            "128",
+            "--num-layers",
+            "4",
+            "--nhead",
+            "4",
+            "--dim-feedforward",
+            "512"
+          ],
+          "name": "pretrain_pilot_alibi_s0",
+          "num_samples": 2,
+          "patience": 0,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 2,
+          "epochs": 2,
+          "extra": [
+            "--pos",
+            "none",
+            "--pos-table-len",
+            "4096",
+            "--ref-legal-mask",
+            "--length-buckets",
+            "--max-len",
+            "0",
+            "--ref-diagnostics",
+            "--wf-probes",
+            "0",
+            "--d-model",
+            "128",
+            "--num-layers",
+            "4",
+            "--nhead",
+            "4",
+            "--dim-feedforward",
+            "512"
+          ],
+          "name": "pretrain_pilot_none_s0",
+          "num_samples": 2,
+          "patience": 0,
+          "sample_seed": 1000,
+          "seed": 0
+        }
+      ]
+    }
+  ],
+  "plan_id": "pretrain_pilot_v1"
+}

@@ -1,0 +1,110 @@
+[
+  {
+    "candidate_id": 230,
+    "factors": {
+      "lay": 1.0,
+      "spa": 0.0,
+      "str": 0.0
+    },
+    "point": 1
+  },
+  {
+    "candidate_id": 20,
+    "factors": {
+      "lay": 0.0,
+      "spa": 0.0,
+      "str": 1.0
+    },
+    "point": 2
+  },
+  {
+    "candidate_id": 0,
+    "factors": {
+      "lay": 0.0,
+      "spa": 1.0,
+      "str": 0.0
+    },
+    "point": 3
+  },
+  {
+    "candidate_id": 175,
+    "factors": {
+      "lay": 0.5,
+      "spa": 0.0,
+      "str": 0.5
+    },
+    "point": 4
+  },
+  {
+    "candidate_id": 165,
+    "factors": {
+      "lay": 0.5,
+      "spa": 0.5,
+      "str": 0.0
+    },
+    "point": 5
+  },
+  {
+    "candidate_id": 10,
+    "factors": {
+      "lay": 0.0,
+      "spa": 0.5,
+      "str": 0.5
+    },
+    "point": 6
+  },
+  {
+    "candidate_id": 231,
+    "factors": {
+      "lay": 0.3333333333333333,
+      "spa": 0.3333333333333333,
+      "str": 0.3333333333333333
+    },
+    "point": 7
+  },
+  {
+    "candidate_id": 232,
+    "factors": {
+      "lay": 0.6666666666666666,
+      "spa": 0.16666666666666666,
+      "str": 0.16666666666666666
+    },
+    "point": 8
+  },
+  {
+    "candidate_id": 233,
+    "factors": {
+      "lay": 0.16666666666666666,
+      "spa": 0.16666666666666666,
+      "str": 0.6666666666666666
+    },
+    "point": 9
+  },
+  {
+    "candidate_id": 234,
+    "factors": {
+      "lay": 0.16666666666666666,
+      "spa": 0.6666666666666666,
+      "str": 0.16666666666666666
+    },
+    "point": 10
+  },
+  {
+    "candidate_id": 170,
+    "factors": {
+      "lay": 0.5,
+      "spa": 0.25,
+      "str": 0.25
+    },
+    "point": 11
+  },
+  {
+    "candidate_id": 169,
+    "factors": {
+      "lay": 0.5,
+      "spa": 0.3,
+      "str": 0.2
+    },
+    "point": 12
+  }
+]

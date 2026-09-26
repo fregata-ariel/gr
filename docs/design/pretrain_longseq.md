@@ -98,3 +98,7 @@
 - bundle: `data/tok_pretrain_mix`(train/val)、`data/tok_pretrain_n<N>`(同じ train/val + 各 n の test、`--max-offset 128`、
   `--eval-length-policy unlimited`)。REF 窓 128 による除外は 0。train の系列長: 平均 107.7、中央 69、p95 326、最大 389、
   1 epoch 2.13M トークン(n48 参照の 7.5 倍 → 2080 Ti 換算で 60 epoch ≈ 20〜25 分、L4 でも同程度と見込む)。
+- パイロット(2026-09-26、Colab L4、`plan_pilot.json`: 3 方式 × 2 epoch、サンプル 2 + 2): 1 run 54〜81 秒(転送・構築・採点込み)。
+  1 epoch は 20 秒未満で、60 epoch + 生成 100 + 100(予算 778 トークン)でも 1 run 30 分前後の見込み(inner timeout 5400 秒内)。
+  Colab の torch は 2.11.0+cu128(pinned イメージの 2.14 と異なる)だが ALiBi 経路も有限で学習が進む(2 epoch で val 0.96、
+  sinusoidal 1.02、none 1.03)。比較 Plan(`plan_compare.json`)を L4 で開始。
