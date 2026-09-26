@@ -83,3 +83,18 @@
   train 20k × 平均 ≈ 150 トークン ≈ 3M トークン/epoch → 30〜40 秒/epoch、60 epoch で 30〜40 分(T4 は
   2080 Ti の 0.7〜0.8 倍の速度、L4 は 1.5〜2 倍)。注意: 長い系列の attention は二乗で効くので n128 の
   比率が高いほど遅くなる。
+
+### 5.2 実装と P1 データ生成(2026-09-26)
+
+- 実装(詳細設計 §7 の T1〜T3、Codex gpt-6-astra low、各回オーケストレータが再検証): e1ec9f9(dataset のノード数分布、
+  `--target-count`、per-n 統計、`experiments/pretrain/make_spec.py`)、1984c8a(`--pos` 4 種、ALiBi、長さバケット、`--max-len`、
+  `prepare_tokens --eval-length-policy`)、a16f9a9(`config.json`、`--init-from`、`--ref-diagnostics`、`--wf-probes`、ランナーの
+  checkpoint 転送、`--colab-inner-timeout-s`)。`train_ar` の変更は `training/smoke_longseq.py` を pinned イメージ内で実行して受入
+  (既定経路の bit 一致、ALiBi の手計算一致、バケットの再現性、4 方式の学習と学習最大長超の採点、init-from の一致/不一致、probe の RNG 分離。
+  記録 `experiments/pretrain/smoke_longseq_t{2,3}_cpu.json`)。
+- データ生成(`experiments/pretrain/gen_data.sh`、生成 commit 547caa0、所要 7 分): test は各 n 200 件を先に確保
+  (8: 200 (940 試行) / 12: 200 (211 試行) / 16: 200 (202 試行) / 24: 200 (201 試行) / 32: 200 (200 試行) / 48: 200 (200 試行) / 64: 200 (200 試行) / 96: 200 (200 試行) / 128: 200 (200 試行) / 192: 200 (200 試行) / 256: 200 (200 試行))。混合 train 20000 / val 1000(試行 24521 / 1286、全 test を exclude)。
+  train の n 別採用数: 8: 298 / 12: 2852 / 16: 3328 / 24: 3722 / 32: 2417 / 48: 2531 / 64: 2444 / 96: 1180 / 128: 1228。val: 8: 9 / 12: 128 / 16: 169 / 24: 195 / 32: 147 / 48: 123 / 64: 110 / 96: 69 / 128: 50。
+- bundle: `data/tok_pretrain_mix`(train/val)、`data/tok_pretrain_n<N>`(同じ train/val + 各 n の test、`--max-offset 128`、
+  `--eval-length-policy unlimited`)。REF 窓 128 による除外は 0。train の系列長: 平均 107.7、中央 69、p95 326、最大 389、
+  1 epoch 2.13M トークン(n48 参照の 7.5 倍 → 2080 Ti 換算で 60 epoch ≈ 20〜25 分、L4 でも同程度と見込む)。
