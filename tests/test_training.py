@@ -444,14 +444,15 @@ def test_prepare_cross_dataset_without_window_or_max_offset_raises(tmp_path):
         prepare_tokens.prepare(source, tmp_path / "out", test_dataset=target)
 
 
-def test_prepare_cross_dataset(tmp_path):
+@pytest.mark.parametrize("val_nodes", [4, 20])
+def test_prepare_cross_dataset(tmp_path, val_nodes):
     import hashlib
     import shutil
     from cfg_reducer.buckets import (AcceptDecision, bucket_for, default_bucket_plan,
                                      measurement_acceptor)
 
     def toy(engine, *, seed):
-        n = {0: 3, 1: 4, 2: 5, 10: 2, 11: 6, 12: 20}[seed]
+        n = {0: 3, 1: val_nodes, 2: 5, 10: 2, 11: 6, 12: 20}[seed]
         nodes = [str(i) for i in range(n)]
         for node in nodes:
             engine.add_node(node)
@@ -484,12 +485,33 @@ def test_prepare_cross_dataset(tmp_path):
     assert (out / 'vocab.json').read_bytes() == (old / 'vocab.json').read_bytes()
     assert meta['max_offset'] == 1
     assert meta['max_len'] == 7 and meta['sequence_capacity'] == 14
-    assert legacy['max_len'] == 9  # old API still uses validation lengths
+    assert legacy['max_len'] == 2 * val_nodes + 1  # old API uses validation lengths
+    explicit = tmp_path / 'explicit_legacy'
+    assert prepare_tokens.prepare(source, explicit, 'train', test_dataset=target,
+                                  eval_length_policy='legacy') == meta
+    for file in out.iterdir():
+        assert file.read_bytes() == (explicit / file.name).read_bytes()
+    unlimited = tmp_path / 'unlimited'
+    unlimited_meta = prepare_tokens.prepare(source, unlimited, 'train', test_dataset=target,
+                                            eval_length_policy='unlimited')
+    assert unlimited_meta['sequence_capacity'] is None
+    assert unlimited_meta['eval_length_policy'] == 'unlimited'
+    assert unlimited_meta['max_len_source'] == 'train'
+    assert unlimited_meta['max_len'] == meta['max_len']
+    assert unlimited_meta['excluded_over_window'] == meta['excluded_over_window']
+    assert [r['seed'] for r in data_utils.read_jsonl(unlimited / 'test.jsonl')] == [10, 12]
+    assert {e['reason'] for e in unlimited_meta['exclusions']} == {'over_window'}
+    assert unlimited_meta['splits']['val'] == 1
+    assert meta['splits']['val'] == int(val_nodes == 4)
+    for name in ('train.jsonl', 'vocab.json'):
+        assert (unlimited / name).read_bytes() == (out / name).read_bytes()
+
     index = json.loads((out / 'evaluation_index.json').read_text())
     assert index['sources']['train'] == hashlib.sha256((source / 'manifest.json').read_bytes()).hexdigest()
     assert index['sources']['test'] == hashlib.sha256((target / 'manifest.json').read_bytes()).hexdigest()
     assert index['selection'] == manifest['selection']
     assert {e['seed']: e['reason'] for e in index['exclusions']} == {
+        **({1: 'over_length'} if val_nodes == 20 else {}),
         11: 'over_window', 12: 'over_length'}
     assert index['exclusions'] == meta['exclusions']
     assert meta['excluded_over_window'] == {'test': {'count': 1, 'seeds': [11]}}
@@ -591,3 +613,77 @@ def test_single_v2_index_preserves_legacy_bundle(tmp_path):
             for mode in ('full', 'entries', 'selection'):
                 assert (tmp_path / f'{mode}_{window}' / name).read_bytes() == expected
     assert ce._read_index(tmp_path / 'full_train/evaluation_index.json')['exclusions']
+
+
+def test_longseq_smoke_subprocess(tmp_path):
+    import importlib.util
+    import os
+    import subprocess
+    import sys
+
+    if importlib.util.find_spec('torch') is None:
+        pytest.skip('torch is unavailable; run smoke_longseq.py in the target image')
+    legacy = Path(os.environ.get('GR_LEGACY_TRAIN_AR', '/tmp/train_ar_before.py'))
+    assert legacy.is_file(), f'legacy trainer required: {legacy} (or set GR_LEGACY_TRAIN_AR)'
+    out = tmp_path / 'smoke.json'
+    result = subprocess.run(
+        [sys.executable, str(TRAIN_AR.with_name('smoke_longseq.py')),
+         '--legacy', str(legacy), '--device', 'cpu', '--out', str(out)],
+        capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(out.read_text())['passed']
+
+
+def test_longseq_batch_order_without_torch():
+    import random
+
+    # Execute only the batching function with a list-based padding stub.
+    # This exercises the real ordering algorithm without importing the trainer.
+    tree = ast.parse(TRAIN_AR.read_text())
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                    and n.name == 'iter_batches')
+    namespace: dict = {'_pad': lambda rows, width, fill, device: rows, 'PAD_VALUE': {'depth': 0}}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(TRAIN_AR), 'exec'), namespace)
+    batches = namespace['iter_batches']
+    seqs = [[i] * n for i, n in enumerate([8, 2, 5, 2, 6, 4, 9, 3, 7])]
+    aux = [{'depth': s} for s in seqs]
+    actual_rng, expected_rng = random.Random(17), random.Random(17)
+    for _ in range(3):
+        order = sorted(range(len(seqs)), key=lambda i: (len(seqs[i]), i))
+        buckets = [order[i:i + 4] for i in range(0, len(order), 4)]
+        for bucket in buckets:
+            expected_rng.shuffle(bucket)
+        expected_rng.shuffle(buckets)
+        expected = [bucket[i:i + 3] for bucket in buckets for i in range(0, len(bucket), 3)]
+        result = list(batches(seqs, aux, 3, -1, None, actual_rng,
+                              length_buckets=True, bucket_size=4))
+        assert [[row[0] for row in b['tokens']] for b in result] == expected
+        assert all(b['tokens'] == b['depth'] for b in result)
+        assert actual_rng.getstate() == expected_rng.getstate()
+    actual_rng, expected_rng = random.Random(17), random.Random(17)
+    for _ in range(3):
+        order = list(range(len(seqs)))
+        expected_rng.shuffle(order)
+        result = list(batches(seqs, aux, 3, -1, None, actual_rng))
+        assert [row[0] for b in result for row in b['tokens']] == order
+        assert actual_rng.getstate() == expected_rng.getstate()
+
+
+def test_longseq_parser_without_torch():
+    import argparse
+    import os
+
+    tree = ast.parse(TRAIN_AR.read_text())
+    functions: list[ast.stmt] = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+                 and n.name in {'nonnegative_int', 'positive_int', 'build_parser'}]
+    namespace: dict = {'argparse': argparse, 'os': os}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(TRAIN_AR), 'exec'), namespace)
+    parser = namespace['build_parser']()
+    args, unknown = parser.parse_known_args(['-f', 'kernel.json'])
+    assert unknown == ['-f', 'kernel.json']
+    assert (args.pos, args.pos_table_len, args.max_len, args.length_buckets, args.bucket_size) == (
+        'learned', 4096, 0, False, 0)
+    for flag, value in [('--pos-table-len', '0'), ('--max-len', '-1'),
+                        ('--bucket-size', '-1'), ('--pos', 'invalid')]:
+        with pytest.raises(SystemExit):
+            parser.parse_known_args([flag, value])

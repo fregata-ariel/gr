@@ -29,7 +29,10 @@ from training.data_utils import write_jsonl
 def prepare(dataset_dir: str | Path, out_dir: str | Path,
             window_from: str | None = None, *,
             test_dataset: str | Path | None = None,
-            max_offset: int | None = None) -> dict:
+            max_offset: int | None = None,
+            eval_length_policy: str = "legacy") -> dict:
+    if eval_length_policy not in ("legacy", "unlimited"):
+        raise ValueError("eval_length_policy must be legacy or unlimited")
     if max_offset is not None:
         if window_from is not None:
             raise ValueError("--window-from and --max-offset are mutually exclusive")
@@ -41,7 +44,8 @@ def prepare(dataset_dir: str | Path, out_dir: str | Path,
             raise ValueError(
                 "--test-dataset requires --window-from train or --max-offset")
         return _prepare_cross_dataset(Path(dataset_dir), Path(test_dataset),
-                                      Path(out_dir), max_offset=max_offset)
+                                      Path(out_dir), max_offset=max_offset,
+                                      eval_length_policy=eval_length_policy)
     dataset_path = Path(dataset_dir)
     manifest = json.loads(
         (dataset_path / "manifest.json").read_text(encoding="utf-8")
@@ -132,7 +136,8 @@ def prepare(dataset_dir: str | Path, out_dir: str | Path,
 
 
 def _prepare_cross_dataset(source: Path, target: Path, out: Path,
-                           max_offset: int | None = None) -> dict:
+                           max_offset: int | None = None,
+                           eval_length_policy: str = "legacy") -> dict:
     """Build a source-shaped bundle with provenance and exclusion denominators."""
     source_bytes = (source / "manifest.json").read_bytes()
     target_bytes = (target / "manifest.json").read_bytes()
@@ -162,7 +167,7 @@ def _prepare_cross_dataset(source: Path, target: Path, out: Path,
     kept_train = [row[1] for row in loaded["train"] if row[2] <= max_offset]
     max_len = max((len(model_input.tokenize(mg, vocab)) for mg in kept_train),
                   default=0)
-    capacity = 2 * max_len
+    capacity = 2 * max_len if eval_length_policy == "legacy" else None
     index = {"version": 1, "sources": sources,
              "selection": target_manifest.get("selection"), "samples": {}, "exclusions": []}
     counts = {}
@@ -184,7 +189,7 @@ def _prepare_cross_dataset(source: Path, target: Path, out: Path,
                 excluded_window.setdefault(split, []).append(entry["seed"])
             else:
                 tokens = model_input.tokenize(mg, vocab)
-                if split != "train" and len(tokens) > capacity:
+                if split != "train" and capacity is not None and len(tokens) > capacity:
                     reason, needed = "over_length", len(tokens)
             if reason:
                 index["exclusions"].append({"sample_id": sid, "seed": entry["seed"],
@@ -207,6 +212,8 @@ def _prepare_cross_dataset(source: Path, target: Path, out: Path,
             "exclusions": index["exclusions"]}
     if fixed:
         meta["max_offset_fixed"] = True
+    if eval_length_policy == "unlimited":
+        meta["eval_length_policy"] = eval_length_policy
     out.mkdir(parents=True, exist_ok=True)
     for split, records in output.items():
         write_jsonl(out / f"{split}.jsonl", records)
@@ -235,10 +242,12 @@ def main(argv: list[str] | None = None) -> None:
              "from the data; rows needing a larger offset are excluded",
     )
     parser.add_argument("--test-dataset", metavar="DIR")
+    parser.add_argument("--eval-length-policy", choices=["legacy", "unlimited"], default="legacy")
     args = parser.parse_args(argv)
 
     meta = prepare(args.dataset, args.out, args.window_from,
-                   test_dataset=args.test_dataset, max_offset=args.max_offset)
+                   test_dataset=args.test_dataset, max_offset=args.max_offset,
+                   eval_length_policy=args.eval_length_policy)
     print(
         f"vocab window REF_1..REF_{meta['max_offset']}, "
         f"max stream length {meta['max_len']}, "

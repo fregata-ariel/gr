@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "legacy",
+    "alibi",
+    "buckets",
+    "structural",
+    "modes"
+  ],
+  "device": "cpu",
+  "image_id": "edabbd33c4c6",
+  "passed": true,
+  "torch_version": "2.14.0+cu126"
+}
