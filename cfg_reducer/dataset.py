@@ -142,6 +142,9 @@ def build_dataset(
     *,
     accept: AcceptHook | None = None,
     exclude: tuple[CFGReference, ...] = (),
+    resolve_config: Callable[[dict, int], dict] | None = None,
+    target_counts: dict[str, int] | None = None,
+    record_node_counts: bool = False,
 ) -> dict:
     """
     Generate one sample per seed, drop structural duplicates across the
@@ -159,8 +162,9 @@ def build_dataset(
     names to BucketPlan objects so even unvisited buckets are reported.
     """
     _validate_splits(splits)
-    if accept is not None or exclude:
-        return _build_selected(out_dir, splits, config, version, generator, code, accept, exclude)
+    if accept is not None or exclude or resolve_config is not None or target_counts is not None or record_node_counts:
+        return _build_selected(out_dir, splits, config, version, generator, code, accept, exclude,
+                               resolve_config, target_counts, record_node_counts)
     desc = _as_descriptor(generator)
     out = Path(out_dir)
 
@@ -300,7 +304,17 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _build_selected(out_dir, splits, config, version, generator, code,
-                    accept: AcceptHook | None, exclude: tuple[CFGReference, ...]) -> dict:
+                    accept: AcceptHook | None, exclude: tuple[CFGReference, ...],
+                    resolve_config: Callable[[dict, int], dict] | None = None,
+                    target_counts: dict[str, int] | None = None,
+                    record_node_counts: bool = False) -> dict:
+    if target_counts is not None:
+        if (target_counts.keys() - splits.keys()
+                or any(type(n) is not int or n <= 0 for n in target_counts.values())):
+            raise ValueError('target_counts requires known splits and positive integers')
+    if record_node_counts and (getattr(accept, 'plan', None) is not None
+                              or any(getattr(accept, 'plans', {}).values())):
+        raise ValueError('num_nodes bucket mode cannot be combined with a plan')
     desc = _as_descriptor(generator)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -308,7 +322,7 @@ def _build_selected(out_dir, splits, config, version, generator, code,
     seen: dict[str, list[CFGReference]] = {}
     for ref in sorted(exclude, key=lambda r: (r.dataset_id, r.sample_id, r.nodes, r.edges)):
         references.setdefault(fingerprint(list(ref.edges), list(ref.nodes)), []).append(ref)
-    manifest_splits = {}
+    manifest_splits: dict[str, dict] = {}
     plans = {}
     with (out / 'rejections.jsonl').open('w', encoding='utf-8') as rejected_file:
         for split, (start, stop) in splits.items():
@@ -325,16 +339,36 @@ def _build_selected(out_dir, splits, config, version, generator, code,
             unbucketed = _bucket_stats(None)
             kept, dropped = [], []
             reasons: dict[str, int] = {}
+            target = (target_counts or {}).get(split)
+            attempts = 0
+            last_seed = None
+            per_num_nodes: dict[str, dict] = {}
+            if record_node_counts:
+                nominal = config['spec']['num_nodes']
+                choices = nominal['choices'] if isinstance(nominal, dict) else [nominal]
+                per_num_nodes = {str(n): {'attempts': 0, 'generated': 0, 'accepted': 0,
+                    'rejected': 0, 'rejected_by_reason': {}, 'cfg_num_nodes_histogram': {}} for n in choices}
             for seed in range(start, stop):
+                if target is not None and len(kept) >= target:
+                    break
+                attempts += 1
+                last_seed = seed
+                resolved = resolve_config(config, seed) if resolve_config is not None else config
+                nominal_n = resolved['spec']['num_nodes'] if record_node_counts else None
+                nstats = per_num_nodes[str(nominal_n)] if record_node_counts else None
+                if nstats is not None:
+                    nstats['attempts'] += 1
                 engine = GraphEngine()
                 bucket = realized = duplicate_of = duplicate_dataset = None
                 reason = None
                 invalid = ()
                 try:
-                    generated_nodes = desc.fn(engine, seed=seed, **config)
+                    generated_nodes = desc.fn(engine, seed=seed, **resolved)
                 except GenerationRejected as exc:
                     reason = exc.reason
                 else:
+                    if nstats is not None:
+                        nstats['generated'] += 1
                     # Generator contract places the entry first; preserve it for reducibility.
                     nodes, edges = tuple(generated_nodes), tuple(cfg_edges(engine))
                     if set(nodes) != set(cfg_nodes(engine)) or len(nodes) != len(set(nodes)):
@@ -349,9 +383,9 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                             reason = duplicate_reason
                             break
                     provenance = {'source': 'synthetic', 'generator': {
-                        'name': desc.name, 'version': version, 'seed': seed, 'config': config}}
+                        'name': desc.name, 'version': version, 'seed': seed, 'config': resolved}}
                     sample_id = store.sample_id_for(provenance)
-                    requested = deepcopy(config)
+                    requested = deepcopy(resolved)
                     if accept is not None or reason is None:
                         mg = reduce_to_metagraph(engine)
                         if accept is not None:
@@ -367,13 +401,24 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                                 reason = 'invalid_feature'
                             if reason is None and not decision.accepted:
                                 reason = decision.reason
+                        if record_node_counts:
+                            realized = dict(realized or {}) | {'num_nodes': nominal_n, 'cfg_num_nodes': len(nodes)}
+                            bucket = f'n{nominal_n}'
                         if reason is None:
+                            if nstats is not None:
+                                histogram = nstats['cfg_num_nodes_histogram']
+                                histogram[str(len(nodes))] = histogram.get(str(len(nodes)), 0) + 1
                             store.save_sample(mg, provenance, split_dir / f'{sample_id}.json', sample_id)
                             seen.setdefault(fp, []).append(CFGReference('', sample_id, nodes, edges))
                             if bucket is not None:
                                 counts[bucket] = counts.get(bucket, 0) + 1
                             kept.append({'seed': seed, 'sample_id': sample_id, 'requested': requested,
                                          'realized': realized, 'bucket': bucket})
+                if nstats is not None:
+                    nstats['accepted' if reason is None else 'rejected'] += 1
+                    if reason is not None:
+                        nr = nstats['rejected_by_reason']
+                        nr[reason] = nr.get(reason, 0) + 1
                 stats = unbucketed if bucket is None else per_bucket.setdefault(bucket, _bucket_stats(None))
                 stats['attempts'] += 1
                 stats['accepted' if reason is None else 'rejected'] += 1
@@ -384,6 +429,8 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                     row = {'seed': seed, 'split': split, 'reason': reason, 'bucket': bucket,
                            'realized': realized, 'duplicate_of': duplicate_of,
                            'duplicate_dataset': duplicate_dataset}
+                    if record_node_counts:
+                        row['num_nodes'] = nominal_n
                     if invalid:
                         assert realized is not None
                         row['realized'] = {key: None if key in invalid else value
@@ -393,7 +440,6 @@ def _build_selected(out_dir, splits, config, version, generator, code,
             for stats in per_bucket.values():
                 if stats['target'] is not None:
                     stats['missing'] = max(0, stats['target'] - stats['accepted'])
-            attempts = stop - start
             manifest_splits[split] = {
                 'seed_range': [start, stop], 'kept': len(kept), 'dropped_duplicates': len(dropped),
                 'samples': kept, 'dropped': dropped, 'attempts': attempts, 'accepted': len(kept),
@@ -401,6 +447,12 @@ def _build_selected(out_dir, splits, config, version, generator, code,
                 'complete': all(s['missing'] in (None, 0) for s in per_bucket.values()),
                 'per_bucket': per_bucket, 'unbucketed': unbucketed, 'rejected_by_reason': reasons,
             }
+            if record_node_counts:
+                manifest_splits[split]['per_num_nodes'] = per_num_nodes
+            if target_counts is not None:
+                manifest_splits[split].update(last_seed=last_seed, target=target,
+                    missing=None if target is None else max(0, target - len(kept)),
+                    complete=manifest_splits[split]['complete'] and (target is None or len(kept) >= target))
     manifest = {'schema_version': store.SCHEMA_VERSION,
                 'generator': {'name': desc.name, 'version': version, 'config': config},
                 'splits': manifest_splits,

@@ -98,6 +98,13 @@ def test_manifest_legacy_bytes(tmp_path):
     fixture = Path(__file__).parent / 'fixtures/generator_v1_manifest.json'
     assert (tmp_path / 'manifest.json').read_bytes() == fixture.read_bytes()
     assert json.dumps(manifest, indent=2, ensure_ascii=False).encode() == fixture.read_bytes()
+    import hashlib
+    digest = hashlib.sha256()
+    for path in sorted(tmp_path.rglob('*.json')):
+        digest.update(str(path.relative_to(tmp_path)).encode())
+        digest.update(path.read_bytes())
+    # Captured from HEAD's builder before P1; includes manifest and sample bytes.
+    assert digest.hexdigest() == '508cb670572c4671bdee811d032d76459e641f55cf62b7093cd2ce7969a2d0ad'
     expected = json.loads(fixture.read_bytes())
     for split, info in expected['splits'].items():
         payloads = [json.loads(p.read_bytes()) for p in sorted((tmp_path / split).glob('*.json'))]
@@ -272,3 +279,213 @@ def test_nonfinite_realized_is_strict_json_rejection(tmp_path, accepted):
     assert manifest['splits']['test']['samples'] == []
     assert manifest['rejected'] == 1
     json.dumps(manifest, allow_nan=False)
+
+
+def distribution(**updates):
+    return {'family': 'layered', 'num_nodes': {'choices': [8, 12], 'weights': [1, 2]},
+            'params': {}} | updates
+
+
+@pytest.mark.parametrize('patch', [
+    {'extra': 1}, {'params_by_num_nodes': {'8': {}, '12': {}}},
+    {'num_nodes': {'choices': [], 'weights': []}},
+    {'num_nodes': {'choices': [12, 8], 'weights': [1, 1]}},
+    {'num_nodes': {'choices': [8, 8], 'weights': [1, 1]}},
+    {'num_nodes': {'choices': [True], 'weights': [1]}},
+    {'num_nodes': {'choices': [0], 'weights': [1]}},
+    {'num_nodes': {'choices': [8.0], 'weights': [1]}},
+    {'num_nodes': {'choices': [8], 'weights': [True]}},
+    {'num_nodes': {'choices': [8], 'weights': [0]}},
+    {'num_nodes': {'choices': [8], 'weights': [-1]}},
+    {'num_nodes': {'choices': [8], 'weights': [float('inf')]}},
+    {'num_nodes': {'choices': [8], 'weights': [float('nan')]}},
+    {'num_nodes': {'choices': [8], 'weights': []}},
+    {'num_nodes': {'choices': [8], 'weights': [1], 'extra': 0}},
+    {'num_nodes': {'choices': '8', 'weights': [1]}},
+    {'params': {'unknown': 1}},
+])
+def test_distribution_validation(patch):
+    from cfg_reducer.dataset_v2 import dataset_spec_from_json
+    with pytest.raises(ValueError):
+        dataset_spec_from_json(distribution(**patch))
+
+
+@pytest.mark.parametrize('params', [{'8': {}}, {'08': {}, '12': {}}, {'8': {}, '12': {}, '16': {}},
+                                    {'8': {}, '12': {'unknown': 1}}, []])
+def test_distribution_parameter_keys(params):
+    from cfg_reducer.dataset_v2 import dataset_spec_from_json
+    value = distribution()
+    del value['params']
+    value['params_by_num_nodes'] = params
+    with pytest.raises(ValueError):
+        dataset_spec_from_json(value)
+    value['num_nodes'] = 8
+    with pytest.raises(ValueError):
+        dataset_spec_from_json(value)
+
+
+def test_resolver_contract():
+    import math
+    from random import Random
+    from cfg_reducer.dataset_v2 import dataset_spec_from_json, dataset_spec_to_json, resolve_sample_config
+    from cfg_reducer.generate_v2 import spec_from_json
+    fixed: dict = {'spec': {'family': 'layered', 'num_nodes': 8, 'params': {}}}
+    assert resolve_sample_config(fixed, 1) is fixed
+    assert dataset_spec_from_json(fixed['spec']) == spec_from_json(
+        {'family': 'layered', 'num_nodes': 8, 'params': {}})
+    config = {'spec': distribution(num_nodes={'choices': [8, 12], 'weights': [1e308, 1e308]})}
+    parsed = dataset_spec_from_json(config['spec'])
+    assert dataset_spec_from_json(dataset_spec_to_json(parsed)) == parsed
+    forward = {s: resolve_sample_config(config, s) for s in range(20)}
+    assert forward == {s: resolve_sample_config(config, s) for s in reversed(range(20))}
+    for seed, resolved in forward.items():
+        draw = Random('gr:num_nodes:v1:' + str(seed)).random() * math.fsum((1, 1))
+        assert resolved['spec']['num_nodes'] == (8 if draw < 1 else 12)
+
+
+def test_distribution_uuid_replay_and_composition(tmp_path):
+    from cfg_reducer.dataset_v2 import main, load_references, resolve_sample_config
+    from cfg_reducer.generate_v2 import descriptor_for, spec_from_json
+    from cfg_reducer.families.mixture import component_for
+    from experiments.pretrain.make_spec import params_for_n
+    from training.mixture_doe import realized_composition
+    value = distribution(family='mixture')
+    del value['params']
+    value['params_by_num_nodes'] = {str(n): params_for_n(n) for n in (8, 12)}
+    spec_path = tmp_path / 'spec.json'
+    spec_path.write_text(json.dumps(value))
+    out = tmp_path / 'mix'
+    main(['--spec', str(spec_path), '--out', str(out), '--split', 'train=0:8', '--version', 'test'])
+    manifest = json.loads((out / 'manifest.json').read_bytes())
+    samples = manifest['splits']['train']['samples']
+    expected = dict(layered=0, structured=0, spaghetti=0)
+    for sample in samples:
+        resolved = resolve_sample_config({'spec': value}, sample['seed'])
+        spec = spec_from_json(resolved['spec'])
+        components = spec.params['components']
+        assert isinstance(components, list)
+        component = components[component_for(spec, sample['seed'])]
+        assert isinstance(component, dict)
+        family = component['family']
+        assert isinstance(family, str)
+        expected[family] += 1
+        fixed = build_dataset(tmp_path / f"fixed{sample['seed']}", {'test': (sample['seed'], sample['seed'] + 1)},
+                              resolved, 'test', descriptor_for(spec))
+        assert fixed['splits']['test']['samples'][0]['sample_id'] == sample['sample_id']
+        assert sample['requested'] == resolved
+        assert sample['bucket'] == f'n{spec.num_nodes}'
+        assert sample['realized']['num_nodes'] == spec.num_nodes
+    assert realized_composition(out) == expected
+    assert len(load_references((out,), version='test')) == len(samples)
+    for sample in samples:
+        spec = spec_from_json(sample['requested']['spec'])
+        reordered = build_dataset(tmp_path / f"reordered{sample['seed']}",
+            {'different_split': (sample['seed'], sample['seed'] + 1)}, {'spec': value},
+            'test', descriptor_for(spec), resolve_config=resolve_sample_config, record_node_counts=True)
+        assert reordered['splits']['different_split']['samples'][0]['sample_id'] == sample['sample_id']
+    original_id = samples[0]['sample_id']
+    samples[0]['sample_id'] = 'wrong'
+    (out / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='sample_id'):
+        load_references((out,), version='test')
+    samples[0]['sample_id'] = original_id
+    (out / 'manifest.json').write_text(json.dumps(manifest))
+    # A weight change alters the manifest but not identity for unchanged resolutions.
+    value['num_nodes']['weights'] = [2, 3]
+    spec_path.write_text(json.dumps(value))
+    main(['--spec', str(spec_path), '--out', str(tmp_path / 'changed'), '--split', 'train=0:8', '--version', 'test'])
+    changed = json.loads((tmp_path / 'changed/manifest.json').read_bytes())
+    shared = 0
+    for sample in changed['splits']['train']['samples']:
+        previous = next((s for s in samples if s['seed'] == sample['seed'] and s['requested'] == sample['requested']), None)
+        if previous:
+            shared += 1
+            assert previous['sample_id'] == sample['sample_id']
+    assert shared
+    sample = samples[0]
+    payload_path = out / 'train' / f"{sample['sample_id']}.json"
+    payload = json.loads(payload_path.read_bytes())
+    payload['provenance']['generator']['seed'] += 1
+    payload_path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match='provenance'):
+        load_references((out,), version='test')
+    sample['requested'] = {}
+    (out / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='requested'):
+        load_references((out,), version='test')
+
+
+def test_node_stats_and_dedup_across_nominal_counts(tmp_path):
+    calls = []
+    def resolve(config, seed):
+        calls.append(seed)
+        return {'spec': {'num_nodes': 8 if seed % 2 == 0 else 12}}
+    def generate(engine, *, seed, spec):
+        return toy(engine, seed=seed)
+    result = build_dataset(tmp_path, {'train': (0, 7)},
+        {'spec': {'num_nodes': {'choices': [8, 12, 16]}}}, 'test', generate,
+        resolve_config=resolve, record_node_counts=True)
+    assert calls == list(range(7))
+    split = result['splits']['train']
+    assert split['rejected_by_reason'] == {'duplicate': 2, 'node_budget': 1}
+    assert split['per_num_nodes'] == {
+        '8': dict(attempts=4, generated=4, accepted=4, rejected=0, rejected_by_reason={},
+                  cfg_num_nodes_histogram={'1': 1, '2': 1, '3': 1, '4': 1}),
+        '12': dict(attempts=3, generated=2, accepted=0, rejected=3,
+                   rejected_by_reason={'duplicate': 2, 'node_budget': 1}, cfg_num_nodes_histogram={}),
+        '16': dict(attempts=0, generated=0, accepted=0, rejected=0,
+                   rejected_by_reason={}, cfg_num_nodes_histogram={})}
+    assert all(json.loads(line)['num_nodes'] == 12 for line in (tmp_path / 'rejections.jsonl').read_text().splitlines())
+    refs = (CFGReference('other', 'different_uuid', ('a',), ()),)
+    excluded = build_dataset(tmp_path / 'excluded', {'test': (1, 2)},
+        {'spec': {'num_nodes': 12}}, 'test', generate, exclude=refs, record_node_counts=True)
+    assert excluded['splits']['test']['rejected_by_reason'] == {'cross_dataset_duplicate': 1}
+
+
+def test_target_counts_cli(tmp_path):
+    from cfg_reducer.dataset_v2 import main
+    spec = tmp_path / 'spec.json'
+    spec.write_text(json.dumps({'family': 'layered', 'num_nodes': 8, 'params': {}}))
+    def run(name, *flags):
+        main(['--spec', str(spec), '--out', str(tmp_path / name), '--split', 'train=0:4',
+              '--split', 'val=10:11', '--version', 'test', *flags])
+        return json.loads((tmp_path / name / 'manifest.json').read_bytes())['splits']
+    split = run('complete', '--target-count', 'train=1')['train']
+    assert (split['attempts'], split['last_seed'], split['target'], split['missing'], split['complete']) == (1, 0, 1, 0, True)
+    assert split['seed_range'] == [0, 4]
+    with pytest.raises(SystemExit) as exc:
+        run('missing', '--target-count', 'train=10')
+    assert exc.value.code == 2
+    split = run('allowed', '--target-count', 'train=10', '--allow-incomplete')['train']
+    assert split['attempts'] == 4 and split['last_seed'] == 3
+    assert split['missing'] == 10 - split['accepted'] and not split['complete']
+    for flags in [('--target-count', 'unknown=1'), ('--target-count', 'train=0'),
+                  ('--target-count', 'train=-1'), ('--target-count', 'train=1.5'),
+                  ('--target-count', 'train=1', '--target-count', 'train=2'),
+                  ('--target-count', 'train=1', '--plan', 'unused.json')]:
+        with pytest.raises(ValueError):
+            run('invalid', *flags)
+    spec.write_text(json.dumps(distribution()))
+    with pytest.raises(ValueError, match='--plan'):
+        run('invalid', '--plan', 'unused.json')
+
+
+def test_distribution_hashseed(tmp_path):
+    import os
+    import subprocess
+    import sys
+    script = '''
+import sys, json
+from pathlib import Path
+from cfg_reducer.dataset_v2 import main
+root = Path(sys.argv[1]); root.mkdir()
+spec = root / 'spec.json'
+spec.write_text(json.dumps({'family': 'layered', 'num_nodes': {'choices': [8,12], 'weights': [1,2]}, 'params': {}}))
+main(['--spec', str(spec), '--out', str(root / 'data'), '--split', 'train=0:6', '--version', 'test'])
+'''
+    for seed in ('1', '77'):
+        subprocess.run([sys.executable, '-c', script, str(tmp_path / seed)],
+                       env=os.environ | {'PYTHONHASHSEED': seed}, check=True)
+    def artifacts(root):
+        return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*.json*')}
+    assert artifacts(tmp_path / '1') == artifacts(tmp_path / '77')
