@@ -403,3 +403,19 @@ layered を exclude)。source は layered と mixed、構成は mask のみ、se
   超える位置が未学習(要検証、影響は最大 0.5% のトークン、比較には影響しない)。
 - **転用(A9-4)**: 頂点の特異性から多項式面は不適。今後の同種実験は全パターンからの乱択を含む逐次
   (ベイズ / GP)設計を `mixture_doe.md` §7 に沿って入れる。
+
+## 16. 可変長・長系列の事前学習モデル(2026-09-26、完了)
+
+詳細は `docs/design/pretrain_longseq.md`(決定 §2、実装 §5.2、比較 §5.3、最終 §5.4)。要点:
+
+- **データ**: 混合 1:1:1(A10)、ノード数 {8…128} を重み付き乱択(dataset レベルの分布、provenance に実現 n)、
+  train 20k / val 1k、test は n ごとに 200(n192 / n256 は外挿用)。REF 窓 128 固定(除外 0)。
+- **モデル**: `train_ar` に `--pos {learned, sinusoidal, alibi, none}`、長さバケット、`--max-len`、`config.json`、
+  `--init-from`、REF 診断、gold-prefix probe を追加。既定 learned 経路は bit 一致(Docker 内 smoke で保証)。
+- **選択**: n192 の NLL で **ALiBi**(0.658)。sinusoidal は ID で同等だが外挿で崩れ(0.885)、none は ID で 0.05 劣る。
+- **最終(3 seed)**: ID 0.568〜0.579、n192 0.644 ± 0.012、n256 0.682 ± 0.012、超過 NLL は全 n で −0.3〜−0.56。
+  n48 bucket 0.575 は §14 の n48 専用モデル(0.61)を下回る。無制約生成の整形率 0.69〜0.86、続き生成は n ≥ 192 で
+  参照制約のみでは崩れる(制約付きは 1.0)。
+- **実行**: Colab L4、比較 3 run + 最終 3 run(3 セッション並列)+ 再スコア 66 件で約 3 CU。
+- **成果物**: `runs/pretrain_final_alibi_s{0,1,2}`(微調整は `--init-from`)。pyClangAST の実 CFG を同じ語彙
+  (REF 窓 128)でトークン化すれば、そのまま微調整・評価できる。
