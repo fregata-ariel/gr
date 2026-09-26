@@ -155,3 +155,14 @@ def test_run_invalid_gr_backend_returns_4(
     monkeypatch.setenv("GR_BACKEND", "bogus")
     assert cli.main(["run", "--plan", str(tmp_path / "plan.json")]) == 4
     assert "error:" in capsys.readouterr().err
+
+
+def test_run_gpu_option_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from training.runner import __main__ as cli_main
+
+    parser = cli_main._build_parser()
+    monkeypatch.delenv("GR_COLAB_GPU", raising=False)
+    assert parser.parse_args(["run", "--plan", "p.json"]).gpu == "T4"
+    assert parser.parse_args(["run", "--plan", "p.json", "--gpu", "L4"]).gpu == "L4"
+    monkeypatch.setenv("GR_COLAB_GPU", "A100")
+    assert cli_main._build_parser().parse_args(["run", "--plan", "p.json"]).gpu == "A100"

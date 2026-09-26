@@ -53,6 +53,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--session", default=DEFAULT_SESSION, help="Colab session name")
     run.add_argument(
+        "--gpu",
+        default=os.environ.get("GR_COLAB_GPU", "T4"),
+        help="Colab GPU variant (T4, L4, A100, ...); default GR_COLAB_GPU or T4",
+    )
+    run.add_argument(
         "--image",
         default=os.environ.get("GR_DOCKER_IMAGE", DEFAULT_IMAGE),
         help="Docker image for the local backend",
@@ -100,7 +105,7 @@ def _run(args: argparse.Namespace) -> int:
 
     factories = {
         "colab": lambda: ColabBackend(
-            args.session, attempts=args.attempts, sleep_s=args.sleep_s, log=_log
+            args.session, args.gpu, attempts=args.attempts, sleep_s=args.sleep_s, log=_log
         ),
         "local": lambda: DockerBackend(args.image, staging, log=_log),
     }

@@ -126,7 +126,8 @@ GR_BACKEND=local uv run python -m training.runner run --plan plan.json    # ロ�
 uv run python -m training.runner run --plan plan.json --backend colab --session sw
 ```
 
-環境変数: `GR_BACKEND`(colab | local | auto、既定 colab)、`GR_DOCKER_IMAGE`(既定
+環境変数: `GR_BACKEND`(colab | local | auto、既定 colab)、`GR_COLAB_GPU`(Colab の GPU 種別、既定 T4。
+CLI の `--gpu` で上書き。Colab Pro では L4 / A100 も指定可、2026-09-26 追加)、`GR_DOCKER_IMAGE`(既定
 `pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime`)、`GR_ROOT`(コンテナ内で runner が設定)。
 ステージング dir は `<repo>/.runner_staging`(gitignore)。ローカル GPU は flock で 1 Plan 専有、
 colab CLI は runner 内で直列化される。
