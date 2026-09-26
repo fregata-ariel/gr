@@ -379,3 +379,27 @@ layered を exclude)。source は layered と mixed、構成は mask のみ、se
   ID の差は 0.002 以下、OOD の差は最大 0.024 で seed 間のばらつき(layered → spaghetti の seed SD ≈ 0.02)
   と同程度。学習 epoch 数(78 / 80、72 / 71)と best val も一致する。GPU の違いは本節の結論
   (効果量 0.3〜0.6)に影響しない。以後、実行先はルーターに任せてよい。
+
+## 15. 混合重みの実験計画(A9、2026-09-16〜26、完了)
+
+詳細は `docs/design/mixture_doe.md`(設計 §1–§6、実行 §8、正規化 §9)。要点:
+
+- **設計**: 混合族の重み (layered, structured, spaghetti) を simplex-centroid 7 点 + 軸点 3 点(n24、seed 0–2、
+  30 run)、確認 run に 2:1:1 と 5:2:3(点 11・12)、n48 は部分集合 5 点(純 3 + 重心 + 点 8、15 run)。
+  応答は固定 test(REF 窓固定 `--max-offset`)に対する target 別 NLL/token と複合 bal(平均)/ max(最悪)/ min。
+  実現配合は provenance から計測(`families.mixture.component_for`)。実行は `training.runner`(ローカル 2080 Ti)。
+- **生の結果(n24)**: bal は混合領域で平坦(重心 0.598、2:1:1 0.597、5:2:3 0.597、点 8 0.601)。最悪ケースは
+  常に layered。Scheffé 多項式は頂点の特異性で lack-of-fit(p ≈ 0)となり、読みはモデルフリー。
+- **正規化(§9)**: 文法対応の頻度基準符号長(`training/info_baseline.py`、型表 + 構造トライグラム + REF の
+  合法候補条件付き分布)を引いた超過 NLL で比べると、生の「layered の損失」は大部分が族の情報量差
+  (基準: layered 1.25 ≫ spaghetti 0.96 > structured 0.74)。モデルの利得は **layered で最大、spaghetti で最小**、
+  正規化後の最悪ケースは spaghetti。bal は正規化後も平坦。
+- **n48(§8.3)**: 同傾向。混合の超過 NLL は n に不変(重心 bal −0.386 → −0.394)、純族モデルの他族への
+  汎化は n とともに悪化(純 structured → layered +2.56 → +3.68)、混合の優位は広がる。点 8 は重心に対し
+  layered −0.04、他 2 族 +0.03 の同じトレードオフ。
+- **決定(A10)**: 既定の混合重みは重心 1 : 1 : 1 を維持。
+- **注意**: (1) n48 の 1 回目は spec の loop/goto 数を n24 のまま残した誤りで無効(別の n の spec は
+  `experiments/sweep/spec_<family>_n<N>.json` から params を写す)。(2) 学習可能な位置埋め込みは学習最大長を
+  超える位置が未学習(要検証、影響は最大 0.5% のトークン、比較には影響しない)。
+- **転用(A9-4)**: 頂点の特異性から多項式面は不適。今後の同種実験は全パターンからの乱択を含む逐次
+  (ベイズ / GP)設計を `mixture_doe.md` §7 に沿って入れる。

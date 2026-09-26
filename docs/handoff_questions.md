@@ -421,3 +421,8 @@ layered で最大・spaghetti で最小。bal は平坦のまま(重心 / 2:1:1 
 4. Colab CLI はまず 0.6.0 に固定する。
 5. `claude --resume` を試す。そのために現在のプロジェクトパス `/home/fischeri/Projects/Compiler/gr` をそのまま移行先でも使う
    (ユーザー `fischeri`、home `/home/fischeri`、uid 1000 ならセッションのキーも scratchpad のパスも変わらない)。
+
+## A10. 混合重みの既定値(2026-09-26 回答)
+
+重心(layered : structured : spaghetti = 1 : 1 : 1)を維持する。正規化後の bal は重心と 2:1:1 で差がなく(§9.1)、
+最悪ケースを spaghetti で定義するなら spaghetti を減らさない重心が自然。生の layered NLL を抑える運用上の理由が出たら 2:1:1 を再検討。
