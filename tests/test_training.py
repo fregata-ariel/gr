@@ -687,3 +687,24 @@ def test_longseq_parser_without_torch():
                         ('--bucket-size', '-1'), ('--pos', 'invalid')]:
         with pytest.raises(SystemExit):
             parser.parse_known_args([flag, value])
+
+
+def test_operation_parser_and_config_order_without_torch():
+    import argparse
+    import os
+
+    tree = ast.parse(TRAIN_AR.read_text())
+    functions: list[ast.stmt] = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+                 and n.name in {'nonnegative_int', 'positive_int', 'build_parser'}]
+    namespace: dict = {'argparse': argparse, 'os': os}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(TRAIN_AR), 'exec'), namespace)
+    parser = namespace['build_parser']()
+    defaults = parser.parse_args([])
+    assert (defaults.init_from, defaults.ref_diagnostics, defaults.wf_probes) == (None, False, 0)
+    args = parser.parse_args(['--init-from', 'runs/source', '--ref-diagnostics', '--wf-probes', '5'])
+    assert (args.init_from, args.ref_diagnostics, args.wf_probes) == ('runs/source', True, 5)
+    with pytest.raises(SystemExit):
+        parser.parse_args(['--wf-probes', '-1'])
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+    calls = {ast.unparse(n.func): n.lineno for n in ast.walk(main) if isinstance(n, ast.Call)}
+    assert calls['write_config'] < calls['torch.optim.AdamW']

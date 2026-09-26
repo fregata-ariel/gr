@@ -23,10 +23,12 @@ history.json, samples.json, val_scores.jsonl.
 
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import math
 import os
 import random
+import subprocess
 from pathlib import Path
 
 # torch is a Colab-side dependency only; it is deliberately absent from
@@ -463,11 +465,14 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
     """Teacher-forced per-sample scores with the per-token NLL trace."""
     model.eval()
     scored = []
+    diagnostics = getattr(model, "ref_diagnostics", False)
+    probe_ids = {r["sample_id"] for r in sorted(rows, key=lambda r: r["sample_id"])
+                 [:getattr(model, "wf_probes", 0)]} if getattr(model, "wf_probes", 0) else set()
     ref_id_set = set(vc.ref_ids.values())
     k_of_id = {i: k for k, i in vc.ref_ids.items()}
     for row in rows:
         seq = row["tokens"]
-        aux = sequence_aux(seq, vc, struct, pointer)
+        aux = sequence_aux(seq, vc, struct, pointer or diagnostics)
         batch = {"tokens": _pad([seq], len(seq), vc.pad, device)}
         for key, values in aux.items():
             batch[key] = _pad([values], len(seq), PAD_VALUE[key], device)
@@ -500,6 +505,25 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
             type_lp = torch.logsumexp(torch.log_softmax(logits, -1)[:, ref_index], -1)
             ref_type_nll = [round(-float(type_lp[t]), 4) for t in ref_pos]
         clamp_metadata = {}
+        if diagnostics:
+            if model.use_pointer:
+                plpos = batch["plpos"][:, :-1]
+                cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
+                                      plpos, vc.max_k,
+                                      batch["klast"][:, :-1] if model.pointer_legal else None)
+                ref_logits = model.pointer_scores(hidden, cand, pointer_dist(plpos))[0]
+                predicted = ref_logits.argmax(-1)
+                ks = [int(plpos[0, t] - plpos[0, predicted[t]]) for t in ref_pos]
+            else:
+                ref_logits = logits[:, ref_index]
+                ks = [int(pred_k[t]) for t in ref_pos]
+            if any(bool(torch.isneginf(ref_logits[t]).all()) for t in ref_pos):
+                raise ValueError(f"data contract: all REF logits are -inf for {row.get('sample_id')}")
+            clamp_metadata["ref_pred_k"] = ks
+            clamp_metadata["ref_pred_legal"] = [
+                aux["klast"][t] < k <= aux["plpos"][t] - 1 for t, k in zip(ref_pos, ks)]
+        if row.get("sample_id") in probe_ids:
+            clamp_metadata["wf_probe"] = wf_probe(model, row, vc, device, struct, pointer)
         if model.use_struct and model.lpos_emb is not None:
             clamp_metadata["lpos_clamped"] = sum(
                 value >= model.lpos_emb.num_embeddings for value in aux["lpos"][:-1])
@@ -552,14 +576,21 @@ def _top_k(logits, top_k):
 
 @torch.no_grad()
 def sample_stream(model, vc: Vocab, device, max_len, temperature, top_k,
-                  state=None, struct=False, pointer=False):
+                  state=None, struct=False, pointer=False, prefix=None):
     """state: optional grammar_mask.GrammarState for constrained decoding
     (every pick masked to the grammar; the tail of the budget spends on
     the shortest legal path to EOS). Under --pointer a REF is emitted by
     sampling the referenced motif and converting to REF_k."""
     model.eval()
-    ids = [vc.bos]
-    for _ in range(max_len - 1):
+    ids = [vc.bos] if prefix is None else list(prefix)
+    if not ids or ids[0] != vc.bos or len(ids) > max_len:
+        raise ValueError("prefix must start with BOS and fit the generation budget")
+    if prefix is not None and state is not None:
+        for token in ids[1:]:
+            state.push(token)
+    if ids[-1] == vc.eos:
+        return ids
+    for _ in range(max_len - len(ids)):
         if state is not None and \
                 (max_len - len(ids)) <= state.min_close_cost() + 2:
             next_id = state.forced_close_id()
@@ -641,6 +672,29 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
     return vc.ref_ids[k]
 
 
+def wf_probe(model, row, vc, device, struct, pointer):
+    seq = row["tokens"]
+    prefix = seq[:max(1, (len(seq) - 1) // 2)]
+    budget = 2 * len(seq)
+    seed = int.from_bytes(hashlib.sha256(
+        f"{model.probe_seed}:{row['sample_id']}:wf-v1".encode()).digest()[:8], "big")
+    device = torch.device(device)
+    devices = [device.index if device.index is not None else torch.cuda.current_device()] \
+        if device.type == "cuda" else []
+    result = {"prefix_len": len(prefix), "budget": budget, "seed": seed}
+    with torch.random.fork_rng(devices=devices):
+        for name, constrained in (("raw", False), ("constrained", True)):
+            # Seed only the generators saved by fork_rng (not other CUDA devices).
+            torch.random.default_generator.manual_seed(seed)
+            for index in devices:
+                torch.cuda.default_generators[index].manual_seed(seed)
+            result[name] = sample_stream(
+                model, vc, device, budget, 1.0, 0,
+                state=grammar_mask.GrammarState(vc.vocab) if constrained else None,
+                struct=struct, pointer=pointer, prefix=prefix)
+    return result
+
+
 # ── main ─────────────────────────────────────
 
 def nonnegative_int(value):
@@ -665,6 +719,9 @@ def build_parser():
     parser.add_argument("--vocab", default=f"{root}/vocab.json")
     parser.add_argument("--meta", default=f"{root}/meta.json")
     parser.add_argument("--out", default=f"{root}/run1")
+    parser.add_argument("--init-from", default=None)
+    parser.add_argument("--ref-diagnostics", action="store_true")
+    parser.add_argument("--wf-probes", type=nonnegative_int, default=0)
     parser.add_argument("--pos", choices=["learned", "sinusoidal", "alibi", "none"], default="learned")
     parser.add_argument("--pos-table-len", type=positive_int, default=4096)
     parser.add_argument("--max-len", type=nonnegative_int, default=0)
@@ -724,11 +781,12 @@ def build_parser():
 def build_model(vc: Vocab, meta: dict, args, gen_max_len: int):
     """Model matching a flag set — shared by training and by sampling
     from a saved checkpoint."""
-    return ARBaseline(
-        vocab_size=len(vc.vocab), max_len=max(meta["max_len"], gen_max_len),
+    values = dict(
+        vocab_size=len(vc.vocab),
+        max_len=getattr(args, "model_max_len", max(meta["max_len"], gen_max_len)),
         pad_id=vc.pad, d_model=args.d_model, nhead=args.nhead,
         num_layers=args.num_layers, dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout, use_struct=args.struct_pos,
+        dropout=args.dropout, use_struct=args.struct_pos, max_depth=16,
         struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
         n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
         pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
@@ -737,6 +795,80 @@ def build_model(vc: Vocab, meta: dict, args, gen_max_len: int):
         pos=getattr(args, "pos", "learned"),
         pos_table_len=getattr(args, "pos_table_len", 4096),
     )
+    model = ARBaseline(**values)
+    model.constructor = values
+    model.ref_diagnostics = getattr(args, "ref_diagnostics", False)
+    model.wf_probes = getattr(args, "wf_probes", 0)
+    model.probe_seed = getattr(args, "seed", 0)
+    return model
+
+
+def vocab_hash(vocab):
+    return hashlib.sha256(json.dumps(vocab, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def table_capacities(model):
+    return {name: getattr(model, name).num_embeddings
+            if getattr(model, name, None) is not None else None
+            for name in ("tok_emb", "pos_emb", "depth_emb", "lpos_emb", "dist_bias")}
+
+
+def read_initialization(args, vc):
+    if not args.init_from:
+        return None
+    source = Path(args.init_from)
+    if source.resolve() == Path(args.out).resolve():
+        raise ValueError("--out must differ from --init-from")
+    for name in ("config.json", "model.pt"):
+        if not (source / name).is_file():
+            raise ValueError(f"--init-from requires {name}: {source} (old runs are unsupported)")
+    config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    if config.get("schema_version") != 1:
+        raise ValueError("--init-from requires config schema_version 1")
+    if config.get("vocab") != vc.vocab or config.get("vocab_sha256") != vocab_hash(vc.vocab):
+        raise ValueError("--init-from vocab dictionary/hash mismatch")
+    try:
+        args.model_max_len = config["model"]["max_len"]
+    except KeyError as exc:
+        raise ValueError("--init-from missing model.max_len") from exc
+    return config
+
+
+def initialize_weights(model, config, source, device):
+    expected = {**model.constructor, "table_capacities": table_capacities(model)}
+    actual = config.get("model", {})
+    # Nonpersistent sinusoidal buffers may grow and need not match allocation size.
+    mismatches = [key for key, value in expected.items()
+                  if key not in actual or (key != "pos_table_len" and actual[key] != value)]
+    if mismatches:
+        raise ValueError("--init-from model mismatch: " + ", ".join(mismatches))
+    state = torch.load(Path(source) / "model.pt", map_location=device, weights_only=True)
+    target = model.state_dict()
+    missing = sorted(set(target) - set(state))
+    extra = sorted(set(state) - set(target))
+    shapes = [key for key in target if key in state and state[key].shape != target[key].shape]
+    if missing or extra or shapes:
+        raise ValueError(f"--init-from state_dict mismatch: missing={missing}, extra={extra}, shapes={shapes}")
+    model.load_state_dict(state, strict=True)
+
+
+def write_config(out, args, vc, meta, model, length_stats):
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], check=True,
+                                capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        commit = None
+    init_from = None if not args.init_from else {
+        name + "_sha256": hashlib.sha256((Path(args.init_from) / name).read_bytes()).hexdigest()
+        for name in ("config.json", "model.pt")}
+    config = {"schema_version": 1, "args": vars(args), "vocab": vc.vocab,
+              "vocab_sha256": vocab_hash(vc.vocab),
+              "model": {**model.constructor, "table_capacities": table_capacities(model)},
+              "meta_summary": {**meta, "train_length_stats": length_stats},
+              "git_commit": commit, "torch_version": str(torch.__version__), "init_from": init_from}
+    (out / "config.json").write_text(
+        json.dumps(config, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
 
 
 def main(argv=None):
@@ -746,7 +878,8 @@ def main(argv=None):
     args, _ = parser.parse_known_args(argv)
 
     needs_grammar = (args.struct_pos or args.pointer or args.constrained
-                     or args.ref_legal_mask or args.constrained_samples)
+                     or args.ref_legal_mask or args.constrained_samples
+                     or args.ref_diagnostics or args.wf_probes)
     if needs_grammar and grammar_mask is None:
         raise SystemExit("this configuration requires grammar_mask.py")
     aux_ctx = args.pointer or args.ref_legal_mask   # pointer context needed
@@ -756,6 +889,7 @@ def main(argv=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     vc = Vocab(json.loads(Path(args.vocab).read_text(encoding="utf-8")))
+    init_config = read_initialization(args, vc)
     meta = json.loads(Path(args.meta).read_text(encoding="utf-8"))
     train_rows = load_rows(args.train)
     if not train_rows:
@@ -782,14 +916,28 @@ def main(argv=None):
     gen_max_len = args.gen_max_len or 2 * meta["max_len"]
     if args.pos != "learned":
         gen_max_len = args.gen_max_len or 2 * max(map(len, train_seqs))
-        args.gen_max_len = gen_max_len
+    args.gen_max_len = gen_max_len
+    args.model_max_len = getattr(args, "model_max_len", max(meta["max_len"], gen_max_len))
+    if init_config is not None and args.pos == "learned":
+        eval_splits = [val_rows, load_rows(args.test) if args.test else []]
+        eval_rows = [row for split in eval_splits for row in split]
+        required = max([gen_max_len] + [len(r["tokens"]) - 1 for r in kept + eval_rows])
+        if args.wf_probes:
+            probes = [row for split in eval_splits
+                      for row in sorted(split, key=lambda r: r["sample_id"])[:args.wf_probes]]
+            required = max([required] + [2 * len(r["tokens"]) for r in probes])
+        if required > args.model_max_len:
+            raise ValueError("--init-from learned table capacity is smaller than input/generation budget")
     model = build_model(vc, meta, args, gen_max_len).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    if init_config is not None:
+        initialize_weights(model, init_config, args.init_from, device)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "length_stats.json").write_text(
         json.dumps(length_stats, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
+    write_config(out, args, vc, meta, model, length_stats)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     history, best_val, best_epoch, since_best = [], float("inf"), 0, 0
 
     for epoch in range(1, args.epochs + 1):

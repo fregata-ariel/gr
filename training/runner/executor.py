@@ -1,7 +1,7 @@
 """Execute a Plan on a Backend, reproducing the shell runner step by step.
 
 The executor stages the code and one bundle at a time, trains every seed,
-fetches the six output files, runs the local evaluation, then re-scores the
+fetches the output files, runs the local evaluation, then re-scores the
 trained checkpoints on the target bundles. It is idempotent (a run is done iff
 ``runs/<name>/test_scores.jsonl`` exists), removes partial output on failure,
 re-acquires the backend after a lost session, records the backend used per run,
@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -23,9 +24,11 @@ from .backend import Backend, BackendUnavailable, RemoteFailure, SessionLost
 from .fake import DryRunBackend
 from .router import Router
 from .scripts import rescore_jobs, rescore_script, train_wrapper
-from .types import Block, Plan, bundle_name
+from .types import Block, Plan, TrainJob, bundle_name
 
 TRAIN_OUTPUTS = (
+    "config.json",
+    "length_stats.json",
     "samples.json",
     "history.json",
     "model.pt",
@@ -171,6 +174,44 @@ class PlanExecutor:
             json.dumps(data, sort_keys=True, indent=2) + "\n", encoding="utf-8"
         )
 
+    def _stage_initialization(self, backend: Backend, job: TrainJob) -> TrainJob:
+        extra = list(job.extra)
+        positions = [i for i, value in enumerate(extra)
+                     if value == "--init-from" or value.startswith("--init-from=")]
+        if not positions:
+            return job
+        if len(positions) != 1:
+            raise ValueError("--init-from must occur once in TrainJob.extra")
+        index = positions[0]
+        inline = extra[index].startswith("--init-from=")
+        if not inline and (index + 1 == len(extra) or extra[index + 1].startswith("--")):
+            raise ValueError("--init-from requires runs/<name>")
+        value = extra[index].split("=", 1)[1] if inline else extra[index + 1]
+        path = Path(value)
+        if path.is_absolute() or len(path.parts) != 2 or path.parts[0] != "runs" or path.name in (".", ".."):
+            raise ValueError("--init-from requires runs/<name>")
+        source = self.runs_dir / path.name
+        if path.name == job.name:
+            raise ValueError("--out must differ from --init-from")
+        for name in ("config.json", "model.pt"):
+            if not (source / name).is_file():
+                raise ValueError(f"--init-from requires local {source / name}")
+        config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+        if not isinstance(config, dict) or config.get("schema_version") != 1:
+            raise ValueError("--init-from requires config schema_version 1")
+        remote = f"{backend.root}/init_{path.name}"
+        backend.run(
+            "from pathlib import Path\n" + f"Path({remote!r}).mkdir(parents=True, exist_ok=True)\n",
+            f"stage_init_{path.name}", 60,
+        )
+        for name in ("config.json", "model.pt"):
+            backend.put(source / name, f"{remote}/{name}")
+        if inline:
+            extra[index] = "--init-from=" + remote
+        else:
+            extra[index + 1] = remote
+        return replace(job, extra=tuple(extra))
+
     def run_block(self, backend: Backend, block: Block) -> None:
         root = backend.root
         source_name = bundle_name(block.source_bundle)
@@ -193,8 +234,9 @@ class PlanExecutor:
                 self.log(f"skip {job.name}")
                 continue
             self.log(f"=== {job.name} start {self.stamp()} ===")
+            executed_job = self._stage_initialization(backend, job)
             output = backend.run(
-                train_wrapper(job, root), job.name, self.train_timeout_s
+                train_wrapper(executed_job, root), job.name, self.train_timeout_s
             )
             if output:
                 self.log(output)

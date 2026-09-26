@@ -166,3 +166,30 @@ def test_run_gpu_option_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert parser.parse_args(["run", "--plan", "p.json", "--gpu", "L4"]).gpu == "L4"
     monkeypatch.setenv("GR_COLAB_GPU", "A100")
     assert cli_main._build_parser().parse_args(["run", "--plan", "p.json"]).gpu == "A100"
+
+
+def test_colab_inner_and_outer_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parser = cli._build_parser()
+    assert parser.parse_args(['run', '--plan', 'p']).colab_inner_timeout_s == 5400
+    assert cli.main(['run', '--help']) == 0
+    assert 'outer timeout' in capsys.readouterr().out
+    path = _write_plan(tmp_path)
+    captured: dict = {}
+
+    def colab(*args, **kwargs):
+        captured['timeouts'] = kwargs['timeouts']
+        return object()
+
+    def run(executor):
+        captured['outer'] = executor.train_timeout_s
+        executor.router.factories['colab']()
+        return 0
+
+    monkeypatch.setattr(cli, 'ColabBackend', colab)
+    monkeypatch.setattr(cli.PlanExecutor, 'run', run)
+    assert cli.main(['run', '--plan', str(path), '--backend', 'colab',
+                     '--colab-inner-timeout-s', '9000', '--train-timeout-s', '9600']) == 0
+    assert captured['timeouts'].exec_inner == 9000
+    assert captured['outer'] == 9600

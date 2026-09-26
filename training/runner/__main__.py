@@ -16,7 +16,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .colab import ColabBackend
+from .colab import ColabBackend, ColabTimeouts
 from .docker import DockerBackend
 from .executor import PlanExecutor
 from .plans import sweep_plan
@@ -73,7 +73,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--attempts", type=int, default=36, help="Colab allocation tries")
     run.add_argument("--sleep-s", type=int, default=600, help="seconds between tries")
-    run.add_argument("--train-timeout-s", type=int, default=6000)
+    run.add_argument("--train-timeout-s", type=int, default=6000,
+                     help="学習実行の outer timeout (秒、既定6000)")
+    run.add_argument("--colab-inner-timeout-s", type=int, default=5400,
+                     help="Colab exec の inner timeout (秒、既定5400)")
     run.add_argument("--rescore-timeout-s", type=int, default=2400)
     run.add_argument("--dry-run", action="store_true", help="print, touch nothing")
     run.add_argument(
@@ -105,7 +108,8 @@ def _run(args: argparse.Namespace) -> int:
 
     factories = {
         "colab": lambda: ColabBackend(
-            args.session, args.gpu, attempts=args.attempts, sleep_s=args.sleep_s, log=_log
+            args.session, args.gpu, attempts=args.attempts, sleep_s=args.sleep_s, log=_log,
+            timeouts=ColabTimeouts(exec_inner=args.colab_inner_timeout_s)
         ),
         "local": lambda: DockerBackend(args.image, staging, log=_log),
     }
@@ -122,7 +126,11 @@ def _run(args: argparse.Namespace) -> int:
         rescore_timeout_s=args.rescore_timeout_s,
         log=_log,
     )
-    return executor.run()
+    try:
+        return executor.run()
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 4
 
 
 def _sweep(args: argparse.Namespace) -> int:

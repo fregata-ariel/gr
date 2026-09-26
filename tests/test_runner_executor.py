@@ -386,3 +386,73 @@ def test_dry_run_logs_and_touches_nothing(tmp_path: Path) -> None:
     assert "RUN-DONE 12:00:00" in logs
     index = logs.index("RUN r_s0 timeout=6000")
     assert logs[index + 1] == train_wrapper(PLAN.blocks[0].train[0], "/content")
+
+
+def test_operation_outputs_optional_for_old_runs(tmp_path: Path) -> None:
+    assert {'config.json', 'length_stats.json'} <= set(TRAIN_OUTPUTS)
+    repo, runs = build_repo(tmp_path)
+    backend = make_backend()
+    original = backend.on_run
+
+    def old_outputs(name: str, script: str) -> str:
+        assert original is not None
+        result = original(name, script)
+        for output in ('config.json', 'length_stats.json'):
+            backend.files.pop(f'/fake/{name}/{output}', None)
+        return result
+
+    backend.on_run = old_outputs
+    executor, _ = make_executor(repo, runs, backend, [])
+    assert executor.run() == 0
+    assert not (runs / 'r_s0/config.json').exists()
+
+
+def test_init_from_staging_and_dry_run(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from training.runner.types import plan_to_json
+
+    repo, runs = build_repo(tmp_path)
+    source = runs / 'pretrained'
+    source.mkdir()
+    (source / 'config.json').write_text('{"schema_version": 1}')
+    (source / 'model.pt').write_bytes(b'weights')
+    for inline in (False, True):
+        extra = ('--init-from=runs/pretrained',) if inline else ('--init-from', 'runs/pretrained')
+        job = replace(PLAN.blocks[0].train[0], extra=('--pos', 'sinusoidal', *extra))
+        plan = Plan('init', (Block('data/tok_x', (job,)),))
+        before = plan_to_json(plan)
+        for dry in (True, False):
+            backend = make_backend()
+            logs: list[str] = []
+            executor, _ = make_executor(repo, runs, backend, logs, dry_run=dry)
+            executor.plan = plan
+            # Exercise every variant rather than skipping the previous result.
+            (runs / job.name / 'test_scores.jsonl').unlink(missing_ok=True)
+            assert executor.run() == 0
+            assert plan_to_json(plan) == before
+            if dry:
+                printed = '\n'.join(logs)
+                assert f'PUT {source}/config.json -> /content/init_pretrained/config.json' in printed
+                assert f'PUT {source}/model.pt -> /content/init_pretrained/model.pt' in printed
+                assert '/content/init_pretrained' in printed
+            else:
+                assert backend.files['/fake/init_pretrained/model.pt'] == b'weights'
+                expected = replace(job, extra=('--pos', 'sinusoidal',
+                    * (('--init-from=/fake/init_pretrained',) if inline else
+                       ('--init-from', '/fake/init_pretrained'))))
+                assert backend.scripts[job.name] == train_wrapper(expected, '/fake')
+
+
+def test_init_from_rejects_invalid_local_run(tmp_path: Path) -> None:
+    from dataclasses import replace
+    import pytest
+
+    repo, runs = build_repo(tmp_path)
+    backend = make_backend()
+    executor, _ = make_executor(repo, runs, backend, [])
+    for extra in (('--init-from',), ('--init-from', '/absolute/run'),
+                  ('--init-from', 'runs/missing'), ('--init-from', 'runs/../x'),
+                  ('--init-from', 'runs/a', '--init-from', 'runs/b')):
+        with pytest.raises(ValueError, match='--init-from'):
+            executor._stage_initialization(backend, replace(PLAN.blocks[0].train[0], extra=extra))
+    assert not backend.calls

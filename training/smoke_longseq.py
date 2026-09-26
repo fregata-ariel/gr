@@ -272,6 +272,144 @@ def structural_check(module, device):
             'odd-width sinusoidal table failed')
 
 
+def operation_check(module, root, vocab, meta, rows, device):
+    vc = module.Vocab(vocab)
+    source = root / 'operation_source'
+    _, argv = arguments(module, root, ['--out', str(source), '--pos', 'sinusoidal',
+                                      '--ref-diagnostics', '--constrained-samples', '2'])
+    with patch.object(torch.cuda, 'is_available', return_value=False):
+        module.main(argv)
+    config = json.loads((source / 'config.json').read_text())
+    require(config['schema_version'] == 1 and config['vocab'] == vocab, 'config contract')
+    require(config['vocab_sha256'] == module.vocab_hash(vocab), 'config vocab hash')
+    require(config['args']['model_max_len'] == config['model']['max_len'], 'resolved capacity')
+    args = argparse.Namespace(**config['args'])
+    model = module.build_model(vc, meta, args, args.gen_max_len).to(device)
+    module.initialize_weights(model, config, source, device)
+    same_state(model.state_dict(), torch.load(source / 'model.pt', weights_only=True,
+                                             map_location=device), 'init weights')
+    # Different target metadata must not resize the saved model.
+    rebuilt = module.build_model(vc, {'max_len': 100}, args, 200).to(device)
+    require(rebuilt.max_len == model.max_len, 'rescore changed model capacity')
+    target = root / 'operation_target'
+    with patch.object(torch.cuda, 'is_available', return_value=False):
+        module.main(argv + ['--out', str(target), '--init-from', str(source), '--seed', '19'])
+    initialized = json.loads((target / 'config.json').read_text())
+    require(initialized['init_from']['model.pt_sha256'], 'missing source hash')
+    require(initialized['args']['seed'] == 19, 'init did not use fresh seed')
+    require(json.loads((target / 'history.json').read_text())[0]['epoch'] == 1, 'init resumed epoch')
+
+    def rejects(call, message):
+        try:
+            call()
+        except ValueError as error:
+            require(message in str(error), f'unclear rejection: {error}')
+        else:
+            raise AssertionError('accepted mismatch: ' + message)
+
+    for flags, message in [(['--pos', 'alibi'], 'pos'),
+                           (['--d-model', '20'], 'd_model'),
+                           (['--nhead', '2'], 'nhead'),
+                           (['--out', str(source)], '--out')]:
+        with patch.object(torch.cuda, 'is_available', return_value=False):
+            rejects(lambda: module.main(argv + ['--out', str(target), '--init-from', str(source)]
+                                        + flags), message)
+    swapped = dict(vocab)
+    swapped['KIND_ENTRY'], swapped['KIND_LINEAR'] = swapped['KIND_LINEAR'], swapped['KIND_ENTRY']
+    changed = root / 'swapped.json'
+    changed.write_text(json.dumps(swapped))
+    rejects(lambda: module.main(argv + ['--out', str(target), '--init-from', str(source),
+                                       '--vocab', str(changed)]), 'vocab')
+    old_run = root / 'old_run'
+    old_run.mkdir()
+    rejects(lambda: module.main(argv + ['--out', str(target), '--init-from', str(old_run)]), 'config.json')
+    state = torch.load(source / 'model.pt', weights_only=True, map_location=device)
+    original = state['head.weight']
+    for mutation in ('shape', 'missing', 'extra'):
+        broken = dict(state)
+        if mutation == 'shape':
+            broken['head.weight'] = original[:-1]
+        elif mutation == 'missing':
+            del broken['head.weight']
+        else:
+            broken['unexpected'] = original
+        torch.save(broken, target / 'model.pt')
+        rejects(lambda: module.initialize_weights(model, config, target, device), 'state_dict')
+
+    for key in ('dropout', 'struct_mode', 'pointer_legal', 'max_k', 'ref_legal_mask',
+                'table_capacities', 'pos_table_len'):
+        incomplete = {**config, 'model': dict(config['model'])}
+        del incomplete['model'][key]
+        rejects(lambda: module.initialize_weights(model, incomplete, source, device), key)
+    # Allocation size of nonpersistent sinusoidal tables may differ.
+    resized = argparse.Namespace(**vars(args))
+    resized.pos_table_len = 7
+    module.initialize_weights(module.build_model(vc, meta, resized, 18).to(device),
+                              config, source, device)
+    for flags in ([], ['--ref-legal-mask'], ['--pointer'], ['--pointer', '--pointer-legal']):
+        diag_args, _ = arguments(module, root, ['--pos', 'sinusoidal', '--ref-diagnostics'] + flags)
+        diagnostic = module.build_model(vc, meta, diag_args, 18).to(device)
+        scores = module.score_rows(diagnostic, rows[:3], vc, device, False, bool(flags))
+        for row, score in zip(rows, scores):
+            aux = module.sequence_aux(row['tokens'], vc, False, True)
+            require(len(score['ref_pred_k']) == len(score['ref_pos']), 'REF diagnostic alignment')
+            require(score['ref_pred_legal'] == [aux['klast'][t] < k <= aux['plpos'][t] - 1
+                    for t, k in zip(score['ref_pos'], score['ref_pred_k'])], 'REF legality')
+        if flags:
+            require(all(all(s['ref_pred_legal']) for s in scores), 'legal REF prediction invalid')
+    bad = module.build_model(vc, meta, diag_args, 18).to(device)
+    rejects(lambda: module.score_rows(bad, [{'tokens': [1, 9, 2]}], vc, device, False, True),
+            'data contract')
+
+    # Direct scoring also checks isolation before ordinary sampling resets its seed.
+    for count in (0, 2):
+        model.wf_probes = count
+        torch.manual_seed(47)
+        before = torch.get_rng_state().clone()
+        scores = module.score_rows(model, rows[8:][::-1], vc, device, False, False)
+        require(torch.equal(before, torch.get_rng_state()), 'probe changed CPU RNG')
+        samples = [module.sample_stream(model, vc, device, 18, 1., 0) for _ in range(2)]
+        if count == 0:
+            expected_scores, expected_samples = scores, samples
+        else:
+            require(samples == expected_samples, 'probes changed samples')
+            require([{k: v for k, v in s.items() if k != 'wf_probe'} for s in scores]
+                    == expected_scores, 'probes changed scores')
+            selected = sorted(r['sample_id'] for r in rows[8:])[:2]
+            for row, score in zip(rows[8:][::-1], scores):
+                require(('wf_probe' in score) == (row['sample_id'] in selected), 'probe ID order')
+                if 'wf_probe' in score:
+                    probe = score['wf_probe']
+                    prefix = row['tokens'][:max(1, (len(row['tokens']) - 1) // 2)]
+                    expected_seed = int.from_bytes(module.hashlib.sha256(
+                        f"{args.seed}:{row['sample_id']}:wf-v1".encode()).digest()[:8], 'big')
+                    require(probe['seed'] == expected_seed, 'probe seed derivation')
+                    require(probe['prefix_len'] == len(prefix) and probe['budget'] == 2 * len(row['tokens']),
+                            'probe prefix/budget')
+                    for key in ('raw', 'constrained'):
+                        require(probe[key][:len(prefix)] == prefix and len(probe[key]) <= probe['budget'],
+                                'probe continuation contract')
+                    state_machine = module.grammar_mask.GrammarState(vocab)
+                    for token in probe['constrained'][1:]:
+                        require(token in state_machine.allowed_ids(), 'probe grammar violation')
+                        state_machine.push(token)
+    probe_run = root / 'operation_probes'
+    with patch.object(torch.cuda, 'is_available', return_value=False):
+        module.main(argv + ['--out', str(probe_run), '--wf-probes', '2'])
+    saved_args = argparse.Namespace(**json.loads((probe_run / 'samples.json').read_text())['config'])
+    rescored = module.build_model(vc, meta, saved_args, saved_args.gen_max_len).to(device)
+    rescored.load_state_dict(torch.load(probe_run / 'model.pt', map_location=device, weights_only=True))
+    require(module.score_rows(rescored, rows[10:], vc, device, False, False) ==
+            module.load_rows(probe_run / 'test_scores.jsonl'), 'rescoring did not reproduce probes')
+    for filename in ('samples.json', 'samples_constrained.json'):
+        require(json.loads((source / filename).read_text())['samples'] ==
+                json.loads((probe_run / filename).read_text())['samples'], 'probe run changed samples')
+    for split in ('val', 'test'):
+        actual = module.load_rows(probe_run / f'{split}_scores.jsonl')
+        require([{k: v for k, v in s.items() if k != 'wf_probe'} for s in actual] ==
+                module.load_rows(source / f'{split}_scores.jsonl'), 'probe run changed scoring')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--legacy', type=Path, required=True)
@@ -293,6 +431,7 @@ def main():
                 ('alibi', lambda: attention_check(new, args.device)),
                 ('buckets', lambda: bucket_check(new, args.device)),
                 ('structural', lambda: structural_check(new, args.device)),
+                ('operation', lambda: operation_check(new, root, vocab, meta, rows, args.device)),
                 ('modes', lambda: modes_check(new, root, vocab, meta, rows, args.device)),
             ]:
                 check()
