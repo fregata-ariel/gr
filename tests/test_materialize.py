@@ -111,7 +111,7 @@ def test_duplicate_point_plan_commands_and_manifest(tmp_path):
         text = (tmp_path / name).read_text()
         assert "set -euo pipefail\n" in text
         assert "rm " not in text
-    assert "dataset_version differs from HEAD" in (tmp_path / "generate.sh").read_text()
+    assert "generator code differs from dataset_version" in (tmp_path / "generate.sh").read_text()
     assert "fixed test manifest hash mismatch" in (tmp_path / "tokenize.sh").read_text()
 
 

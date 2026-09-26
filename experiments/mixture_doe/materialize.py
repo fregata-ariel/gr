@@ -153,9 +153,13 @@ def materialize(payload: Any, out_dir: Path) -> dict[str, Any]:
     header = ["#!/usr/bin/env bash", "set -euo pipefail", "# repository root から実行する。"]
     generate, tokenize, collect = (header.copy() for _ in range(3))
     if "dataset_version" in context:
+        # docs commits move HEAD without touching the generator, so compare the generator code
+        # (cfg_reducer tree + prepare_tokens blob) at dataset_version with the same objects at HEAD.
         generate.append(_command("uv", "run", "python", "-c",
-            "import subprocess,sys; actual=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); "
-            "sys.exit(0 if actual == sys.argv[1] else 'dataset_version differs from HEAD')",
+            "import subprocess,sys\n"
+            "def obj(rev, path): return subprocess.check_output(['git','rev-parse',rev+':'+path],text=True).strip()\n"
+            "paths=('cfg_reducer','training/prepare_tokens.py')\n"
+            "sys.exit(0 if all(obj(sys.argv[1],p)==obj('HEAD',p) for p in paths) else 'generator code differs from dataset_version')",
             context["dataset_version"]))
     for target, digest in sorted(context.get("test_manifests", {}).items()):
         check = _command("uv", "run", "python", "-c",
