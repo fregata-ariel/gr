@@ -1,0 +1,407 @@
+{
+  "family": "mixture",
+  "num_nodes": {
+    "choices": [
+      8,
+      12,
+      16,
+      24,
+      32,
+      48,
+      64,
+      96,
+      128
+    ],
+    "weights": [
+      3,
+      3,
+      3,
+      3,
+      2,
+      2,
+      2,
+      1,
+      1
+    ]
+  },
+  "params_by_num_nodes": {
+    "12": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 1,
+            "loop_count": 1,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 1,
+            "loop_count": 1,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 1,
+            "loop_count": 1,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "128": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 12,
+            "loop_count": 19,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 12,
+            "loop_count": 19,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 12,
+            "loop_count": 19,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "16": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 1,
+            "loop_count": 2,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 1,
+            "loop_count": 2,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 1,
+            "loop_count": 2,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "24": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 2,
+            "loop_count": 3,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 2,
+            "loop_count": 3,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 2,
+            "loop_count": 3,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "32": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 3,
+            "loop_count": 4,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 3,
+            "loop_count": 4,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 3,
+            "loop_count": 4,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "48": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 4,
+            "loop_count": 7,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 4,
+            "loop_count": 7,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 4,
+            "loop_count": 7,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "64": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 6,
+            "loop_count": 9,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 6,
+            "loop_count": 9,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 6,
+            "loop_count": 9,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "8": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 0,
+            "loop_count": 1,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 0,
+            "loop_count": 1,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 0,
+            "loop_count": 1,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    },
+    "96": {
+      "components": [
+        {
+          "family": "layered",
+          "params": {
+            "edge_prob": 0.18,
+            "goto_count": 9,
+            "loop_count": 14,
+            "max_layer_width": 3,
+            "span_mode": "uniform"
+          },
+          "weight": 1
+        },
+        {
+          "family": "structured",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 9,
+            "loop_count": 14,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        },
+        {
+          "family": "spaghetti",
+          "params": {
+            "branch_degree": 2,
+            "goto_count": 9,
+            "loop_count": 14,
+            "max_layer_width": 3,
+            "merge_degree": 3,
+            "spaghetti_rate": 0.1,
+            "span_mode": "uniform",
+            "target_depth": null
+          },
+          "weight": 1
+        }
+      ]
+    }
+  }
+}

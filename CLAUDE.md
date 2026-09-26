@@ -24,7 +24,10 @@ cfg_reducer/
 main.py          — Interactive matplotlib visualizer (imports generate_cfg)
 training/        — AR baseline: local tokenize/eval (cfg_reducer, no torch),
                    Colab trainer train_ar.py (torch only, single file)
+  runner/        — compute backend router: Plan JSON -> Colab CLI or local Docker GPU
+                   (stdlib only; docs/design/compute_backend*.md)
 docs/            — Discussion logs and design notes
+experiments/     — specs, Plan JSON, observations and scripts behind runs/ (experiments/README.md)
 tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
 
@@ -54,3 +57,46 @@ MetaGraph invariants, verification commands, and open design decisions.
 
 `/home/user/Projects/Compiler/pyClangAST/` — C/C++ AST parser (`calisp`) for building
 real CFG training corpora. Read-only reference; not modified from this project.
+
+## Compute backends
+
+Experiments run through `python -m training.runner` (design: `docs/design/compute_backend.md`).
+The default backend is `colab`; on this machine set `GR_BACKEND=local` to use the RTX 2080 Ti
+via Docker (image `pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime`, staging `.runner_staging/`).
+Always `run --dry-run` a new Plan first. A run is done iff `runs/<name>/test_scores.jsonl`
+exists; `runs/<name>/backend.json` records where it ran. Do not run `colab` commands by hand
+while a runner is active unless you take its lock (`flock ~/.cache/gr-runner/colab.lock colab ...`);
+`new`/`stop`/`sessions` use that global lock, per-session commands use `colab-<session>.lock`.
+Colab Pro allows 3 concurrent sessions: run parallel Plans with distinct `--session` names.
+
+## Dev environment backup
+
+`tools/devenv/` holds the manifest-driven generation backup (`backup.sh`, installed by `install.sh` as a
+daily systemd user timer to `/mnt/data/backups/gr`) and `restore.sh`, which relocates the checkout and the
+Claude Code session to a new project path (Coder migration). Scope and procedure: `docs/devenv.md`.
+Experiment metadata (specs, Plans, observations) lives in `experiments/`, not in the session scratchpad.
+The manifest's per-session entries (file-history, session-env, the `/tmp` scratchpad) name the session id;
+update them when the session changes, then re-run `install.sh`.
+
+## Delegation
+
+Rules that delegated agents must follow are in `AGENTS.md` (both Codex and OpenCode
+read it at start-up). Division of labour since 2026-09-09: Claude Code orchestrates and
+takes design decisions; Codex (`gpt-6-astra`, effort `high`) writes detailed designs;
+Codex (`gpt-6-astra`, effort `low`) implements one or two design tasks per run; OpenCode
+(`opencode-go/deepseek-v4.1-flash`, `opencode-go/muse-spark-1.3-contributor`) is used
+for prototype-level scripts and bounded edits. Every delegated result is re-verified
+here (`uv run pytest -q`, `uv run ty check`, `git diff --check`) before it is committed.
+
+- Codex: `node ~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs
+  task --background --write --model gpt-6-astra --effort <high|low> "$(cat prompt.md)"`,
+  then `status` / `result`. Write the prompt to a file with a quoted heredoc; a bash
+  double-quoted string swallows backticks.
+- OpenCode: run in a data-free `git worktree add --detach /tmp/oc-wt HEAD` (the real
+  checkout's `data/` and `runs/` make its init hang) and always under `timeout`.
+  Read-only generation: `opencode run --pure --agent plan -m <model> --dir /tmp/oc-wt --
+  "<prompt>"`; bounded edits: `--agent build --auto` in the worktree, then review the
+  diff. Commit in the worktree (detached HEAD), then advance the branch from the main
+  checkout with `git merge --ff-only <sha>` — merging inside the worktree is a no-op. Never put backticks in the message or an attached file — `opencode run` stalls
+  silently on them. A run that produces no output within a few minutes is a stall:
+  retry once.

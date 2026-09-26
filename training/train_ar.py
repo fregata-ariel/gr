@@ -23,9 +23,12 @@ history.json, samples.json, val_scores.jsonl.
 
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import math
+import os
 import random
+import subprocess
 from pathlib import Path
 
 # torch is a Colab-side dependency only; it is deliberately absent from
@@ -110,13 +113,27 @@ def _pad(rows, width, fill, device):
     return out.to(device)
 
 
-def iter_batches(seqs, auxes, batch_size, pad_id, device, rng=None):
+def iter_batches(seqs, auxes, batch_size, pad_id, device, rng=None, *,
+                 length_buckets=False, bucket_size=0):
     """Yields dict batches: tokens plus every aux key present."""
     order = list(range(len(seqs)))
-    if rng is not None:
-        rng.shuffle(order)
-    for i in range(0, len(order), batch_size):
-        idx = order[i:i + batch_size]
+    if length_buckets:
+        if bucket_size < 0:
+            raise ValueError("bucket_size must be nonnegative")
+        size = bucket_size or 20 * batch_size
+        order.sort(key=lambda i: (len(seqs[i]), i))
+        buckets = [order[i:i + size] for i in range(0, len(order), size)]
+        if rng is not None:
+            for bucket in buckets:
+                rng.shuffle(bucket)
+            rng.shuffle(buckets)
+        batches = [bucket[i:i + batch_size] for bucket in buckets
+                   for i in range(0, len(bucket), batch_size)]
+    else:
+        if rng is not None:
+            rng.shuffle(order)
+        batches = [order[i:i + batch_size] for i in range(0, len(order), batch_size)]
+    for idx in batches:
         width = max(len(seqs[j]) for j in idx)
         batch = {"tokens": _pad([seqs[j] for j in idx], width, pad_id, device)}
         for key in auxes[idx[0]]:
@@ -191,6 +208,16 @@ def check_ref_mask(seqs, vc: Vocab, device, limit=200):
     return True
 
 
+def alibi_slopes(nhead):
+    if nhead <= 0:
+        raise ValueError("nhead must be positive")
+    power = 2 ** int(math.log2(nhead))
+    def slopes(n):
+        a = 2 ** (-2 ** (-(math.log2(n) - 3)))
+        return [a ** (h + 1) for h in range(n)]
+    return slopes(power) + slopes(2 * power)[0::2][:nhead - power]
+
+
 class ARBaseline(nn.Module):
     def __init__(self, vocab_size, max_len, pad_id,
                  d_model=128, nhead=4, num_layers=4,
@@ -198,8 +225,18 @@ class ARBaseline(nn.Module):
                  use_struct=False, max_depth=16, struct_mode="learned",
                  use_pointer=False, n_types=0, pointer_legal=False,
                  pointer_dist_bias=False, max_k=0, dist_bias_mode="scalar",
-                 ref_legal_mask=False):
+                 ref_legal_mask=False, pos="learned", pos_table_len=4096):
         super().__init__()
+        if pos not in ("learned", "sinusoidal", "alibi", "none"):
+            raise ValueError(f"unknown position mode: {pos}")
+        if nhead <= 0 or d_model % nhead:
+            raise ValueError("nhead must be positive and divide d_model")
+        if pos_table_len <= 0:
+            raise ValueError("pos_table_len must be positive")
+        if pos == "none" and use_struct:
+            raise ValueError("--pos none cannot be combined with --struct-pos")
+        self.pos = pos
+        self.nhead = nhead
         self.pad_id = pad_id
         self.max_k = max_k
         self.ref_legal_mask = ref_legal_mask
@@ -212,11 +249,23 @@ class ARBaseline(nn.Module):
         self.pointer_dist_bias = pointer_dist_bias
         self.dist_bias_mode = dist_bias_mode
         self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
-        self.pos_emb = nn.Embedding(max_len, d_model)
+        self.pos_emb = None
+        if pos == "learned":
+            self.pos_emb = nn.Embedding(max_len, d_model)
+        elif pos == "sinusoidal":
+            self.register_buffer("pos_table", sinusoidal_table(pos_table_len, d_model),
+                                 persistent=False)
+        elif pos == "alibi":
+            self.register_buffer("alibi_slopes", torch.tensor(alibi_slopes(nhead)),
+                                 persistent=False)
         if use_struct:
             self.depth_emb = nn.Embedding(max_depth, d_model)
             self.struct_mode = struct_mode
-            if struct_mode == "sinusoidal":
+            if struct_mode == "sinusoidal" and pos != "learned":
+                self.lpos_emb = None
+                self.register_buffer("lpos_table", sinusoidal_table(pos_table_len, d_model),
+                                     persistent=False)
+            elif struct_mode == "sinusoidal":
                 self.lpos_emb = nn.Embedding.from_pretrained(
                     sinusoidal_table(max_len, d_model), freeze=True)
             elif struct_mode == "depth_only":
@@ -228,7 +277,10 @@ class ARBaseline(nn.Module):
             dim_feedforward=dim_feedforward, dropout=dropout,
             batch_first=True, norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(layer, num_layers)
+        if pos == "learned":
+            self.encoder = nn.TransformerEncoder(layer, num_layers)
+        else:
+            self.encoder = nn.TransformerEncoder(layer, num_layers, enable_nested_tensor=False)
         if use_pointer:
             self.type_head = nn.Linear(d_model, n_types)
             self.ptr_q = nn.Linear(d_model, d_model)
@@ -244,16 +296,60 @@ class ARBaseline(nn.Module):
         else:
             self.head = nn.Linear(d_model, vocab_size)
 
+    def _position_table(self, name, length, hidden):
+        table = getattr(self, name)
+        if length > table.size(0):
+            table = sinusoidal_table(max(length, 2 * table.size(0)), self.d_model)
+        table = table.to(device=hidden.device, dtype=hidden.dtype)
+        setattr(self, name, table)
+        return table
+
+    def attention_masks(self, x, hidden):
+        length = x.size(1)
+        causal = nn.Transformer.generate_square_subsequent_mask(
+            length, device=hidden.device, dtype=hidden.dtype)
+        if self.pos == "alibi":
+            indices = torch.arange(length, device=hidden.device)
+            distance = indices[:, None] - indices[None, :]
+            bias = -self.alibi_slopes.to(hidden.dtype)[:, None, None] * distance
+            causal = (causal + bias).unsqueeze(0).expand(
+                x.size(0), -1, -1, -1).reshape(x.size(0) * self.nhead, length, length)
+        padding = torch.zeros(x.shape, device=hidden.device, dtype=hidden.dtype)
+        return causal, padding.masked_fill(x.eq(self.pad_id), NEG)
+
     def encode(self, x, depth=None, lpos=None):
         length = x.size(1)
         positions = torch.arange(length, device=x.device)
-        hidden = self.tok_emb(x) + self.pos_emb(positions)[None]
+        if self.pos == "learned":
+            if length > self.pos_emb.num_embeddings:
+                raise ValueError(f"learned position capacity {self.pos_emb.num_embeddings} "
+                                 f"exceeded by input length {length}; scoring never truncates")
+            hidden = self.tok_emb(x) + self.pos_emb(positions)[None]
+        else:
+            hidden = self.tok_emb(x)
+            if self.pos == "sinusoidal":
+                hidden = hidden + self._position_table("pos_table", length, hidden)[:length][None]
         if self.use_struct:
             if depth is None or lpos is None:
                 raise ValueError("struct-pos model needs depth/lpos inputs")
             hidden = hidden + self.depth_emb(depth.clamp(max=self.max_depth - 1))
             if self.lpos_emb is not None:
-                hidden = hidden + self.lpos_emb(lpos.clamp(max=self.max_len - 1))
+                hidden = hidden + self.lpos_emb(lpos.clamp(max=self.lpos_emb.num_embeddings - 1))
+            elif self.struct_mode == "sinusoidal":
+                table = self._position_table("lpos_table", int(lpos.max()) + 1, hidden)
+                hidden = hidden + table[lpos]
+        if self.pos != "learned":
+            causal, padding = self.attention_masks(x, hidden)
+            if self.pos == "alibi":
+                fastpath = torch.backends.mha.get_fastpath_enabled()
+                torch.backends.mha.set_fastpath_enabled(False)
+                try:
+                    return self.encoder(hidden, mask=causal,
+                                        src_key_padding_mask=padding, is_causal=False)
+                finally:
+                    torch.backends.mha.set_fastpath_enabled(fastpath)
+            return self.encoder(hidden, mask=causal,
+                                src_key_padding_mask=padding, is_causal=False)
         causal = nn.Transformer.generate_square_subsequent_mask(
             length, device=x.device)
         return self.encoder(hidden, mask=causal,
@@ -328,12 +424,13 @@ def token_logprobs(model, batch, vc: Vocab):
 
 
 def run_epoch(model, seqs, auxes, batch_size, vc: Vocab, device,
-              optimizer=None, rng=None):
+              optimizer=None, rng=None, *, length_buckets=False, bucket_size=0):
     training = optimizer is not None
     model.train(training)
     total_loss = total_tokens = total_correct = 0
     with torch.set_grad_enabled(training):
-        for batch in iter_batches(seqs, auxes, batch_size, vc.pad, device, rng):
+        for batch in iter_batches(seqs, auxes, batch_size, vc.pad, device, rng,
+                                  length_buckets=length_buckets, bucket_size=bucket_size):
             logp, valid = token_logprobs(model, batch, vc)
             n_tokens = int(valid.sum())
             loss = -(logp * valid).sum() / n_tokens
@@ -368,11 +465,14 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
     """Teacher-forced per-sample scores with the per-token NLL trace."""
     model.eval()
     scored = []
+    diagnostics = getattr(model, "ref_diagnostics", False)
+    probe_ids = {r["sample_id"] for r in sorted(rows, key=lambda r: r["sample_id"])
+                 [:getattr(model, "wf_probes", 0)]} if getattr(model, "wf_probes", 0) else set()
     ref_id_set = set(vc.ref_ids.values())
     k_of_id = {i: k for k, i in vc.ref_ids.items()}
     for row in rows:
         seq = row["tokens"]
-        aux = sequence_aux(seq, vc, struct, pointer)
+        aux = sequence_aux(seq, vc, struct, pointer or diagnostics)
         batch = {"tokens": _pad([seq], len(seq), vc.pad, device)}
         for key, values in aux.items():
             batch[key] = _pad([values], len(seq), PAD_VALUE[key], device)
@@ -404,7 +504,31 @@ def score_rows(model, rows, vc: Vocab, device, struct, pointer):
             # log P(any REF) = logsumexp over REF_k: the type cost inside NLL(REF_k)
             type_lp = torch.logsumexp(torch.log_softmax(logits, -1)[:, ref_index], -1)
             ref_type_nll = [round(-float(type_lp[t]), 4) for t in ref_pos]
+        clamp_metadata = {}
+        if diagnostics:
+            if model.use_pointer:
+                plpos = batch["plpos"][:, :-1]
+                cand = candidate_mask(batch["is_kind"][:, :-1], batch["level_id"][:, :-1],
+                                      plpos, vc.max_k,
+                                      batch["klast"][:, :-1] if model.pointer_legal else None)
+                ref_logits = model.pointer_scores(hidden, cand, pointer_dist(plpos))[0]
+                predicted = ref_logits.argmax(-1)
+                ks = [int(plpos[0, t] - plpos[0, predicted[t]]) for t in ref_pos]
+            else:
+                ref_logits = logits[:, ref_index]
+                ks = [int(pred_k[t]) for t in ref_pos]
+            if any(bool(torch.isneginf(ref_logits[t]).all()) for t in ref_pos):
+                raise ValueError(f"data contract: all REF logits are -inf for {row.get('sample_id')}")
+            clamp_metadata["ref_pred_k"] = ks
+            clamp_metadata["ref_pred_legal"] = [
+                aux["klast"][t] < k <= aux["plpos"][t] - 1 for t, k in zip(ref_pos, ks)]
+        if row.get("sample_id") in probe_ids:
+            clamp_metadata["wf_probe"] = wf_probe(model, row, vc, device, struct, pointer)
+        if model.use_struct and model.lpos_emb is not None:
+            clamp_metadata["lpos_clamped"] = sum(
+                value >= model.lpos_emb.num_embeddings for value in aux["lpos"][:-1])
         scored.append({
+            **clamp_metadata,
             "sample_id": row.get("sample_id"), "seed": row.get("seed"),
             "n_tokens": n_tokens, "nll": nll, "nll_per_token": nll / n_tokens,
             "acc": acc, "token_nll": [round(x, 4) for x in token_nll],
@@ -452,14 +576,21 @@ def _top_k(logits, top_k):
 
 @torch.no_grad()
 def sample_stream(model, vc: Vocab, device, max_len, temperature, top_k,
-                  state=None, struct=False, pointer=False):
+                  state=None, struct=False, pointer=False, prefix=None):
     """state: optional grammar_mask.GrammarState for constrained decoding
     (every pick masked to the grammar; the tail of the budget spends on
     the shortest legal path to EOS). Under --pointer a REF is emitted by
     sampling the referenced motif and converting to REF_k."""
     model.eval()
-    ids = [vc.bos]
-    for _ in range(max_len - 1):
+    ids = [vc.bos] if prefix is None else list(prefix)
+    if not ids or ids[0] != vc.bos or len(ids) > max_len:
+        raise ValueError("prefix must start with BOS and fit the generation budget")
+    if prefix is not None and state is not None:
+        for token in ids[1:]:
+            state.push(token)
+    if ids[-1] == vc.eos:
+        return ids
+    for _ in range(max_len - len(ids)):
         if state is not None and \
                 (max_len - len(ids)) <= state.min_close_cost() + 2:
             next_id = state.forced_close_id()
@@ -541,15 +672,61 @@ def _sample_pointer_step(model, hidden, aux, vc, allowed, temperature, top_k, de
     return vc.ref_ids[k]
 
 
+def wf_probe(model, row, vc, device, struct, pointer):
+    seq = row["tokens"]
+    prefix = seq[:max(1, (len(seq) - 1) // 2)]
+    budget = 2 * len(seq)
+    seed = int.from_bytes(hashlib.sha256(
+        f"{model.probe_seed}:{row['sample_id']}:wf-v1".encode()).digest()[:8], "big")
+    device = torch.device(device)
+    devices = [device.index if device.index is not None else torch.cuda.current_device()] \
+        if device.type == "cuda" else []
+    result = {"prefix_len": len(prefix), "budget": budget, "seed": seed}
+    with torch.random.fork_rng(devices=devices):
+        for name, constrained in (("raw", False), ("constrained", True)):
+            # Seed only the generators saved by fork_rng (not other CUDA devices).
+            torch.random.default_generator.manual_seed(seed)
+            for index in devices:
+                torch.cuda.default_generators[index].manual_seed(seed)
+            result[name] = sample_stream(
+                model, vc, device, budget, 1.0, 0,
+                state=grammar_mask.GrammarState(vc.vocab) if constrained else None,
+                struct=struct, pointer=pointer, prefix=prefix)
+    return result
+
+
 # ── main ─────────────────────────────────────
 
+def nonnegative_int(value):
+    result = int(value)
+    if result < 0:
+        raise argparse.ArgumentTypeError("must be nonnegative")
+    return result
+
+
+def positive_int(value):
+    result = nonnegative_int(value)
+    if result == 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return result
+
+
 def build_parser():
+    root = os.environ.get("GR_ROOT", "/content")
     parser = argparse.ArgumentParser(description="Train the AR baseline.")
-    parser.add_argument("--train", default="/content/train.jsonl")
-    parser.add_argument("--val", default="/content/val.jsonl")
-    parser.add_argument("--vocab", default="/content/vocab.json")
-    parser.add_argument("--meta", default="/content/meta.json")
-    parser.add_argument("--out", default="/content/run1")
+    parser.add_argument("--train", default=f"{root}/train.jsonl")
+    parser.add_argument("--val", default=f"{root}/val.jsonl")
+    parser.add_argument("--vocab", default=f"{root}/vocab.json")
+    parser.add_argument("--meta", default=f"{root}/meta.json")
+    parser.add_argument("--out", default=f"{root}/run1")
+    parser.add_argument("--init-from", default=None)
+    parser.add_argument("--ref-diagnostics", action="store_true")
+    parser.add_argument("--wf-probes", type=nonnegative_int, default=0)
+    parser.add_argument("--pos", choices=["learned", "sinusoidal", "alibi", "none"], default="learned")
+    parser.add_argument("--pos-table-len", type=positive_int, default=4096)
+    parser.add_argument("--max-len", type=nonnegative_int, default=0)
+    parser.add_argument("--length-buckets", action="store_true")
+    parser.add_argument("--bucket-size", type=nonnegative_int, default=0)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--patience", type=int, default=0,
                         help="early stop after N epochs without val "
@@ -604,17 +781,94 @@ def build_parser():
 def build_model(vc: Vocab, meta: dict, args, gen_max_len: int):
     """Model matching a flag set — shared by training and by sampling
     from a saved checkpoint."""
-    return ARBaseline(
-        vocab_size=len(vc.vocab), max_len=max(meta["max_len"], gen_max_len),
+    values = dict(
+        vocab_size=len(vc.vocab),
+        max_len=getattr(args, "model_max_len", max(meta["max_len"], gen_max_len)),
         pad_id=vc.pad, d_model=args.d_model, nhead=args.nhead,
         num_layers=args.num_layers, dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout, use_struct=args.struct_pos,
+        dropout=args.dropout, use_struct=args.struct_pos, max_depth=16,
         struct_mode=args.struct_pos_mode, use_pointer=args.pointer,
         n_types=len(vc.type_names), pointer_legal=args.pointer_legal,
         pointer_dist_bias=args.pointer_dist_bias, max_k=vc.max_k,
         dist_bias_mode=args.pointer_dist_bias_mode,
         ref_legal_mask=getattr(args, "ref_legal_mask", False),
+        pos=getattr(args, "pos", "learned"),
+        pos_table_len=getattr(args, "pos_table_len", 4096),
     )
+    model = ARBaseline(**values)
+    model.constructor = values
+    model.ref_diagnostics = getattr(args, "ref_diagnostics", False)
+    model.wf_probes = getattr(args, "wf_probes", 0)
+    model.probe_seed = getattr(args, "seed", 0)
+    return model
+
+
+def vocab_hash(vocab):
+    return hashlib.sha256(json.dumps(vocab, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def table_capacities(model):
+    return {name: getattr(model, name).num_embeddings
+            if getattr(model, name, None) is not None else None
+            for name in ("tok_emb", "pos_emb", "depth_emb", "lpos_emb", "dist_bias")}
+
+
+def read_initialization(args, vc):
+    if not args.init_from:
+        return None
+    source = Path(args.init_from)
+    if source.resolve() == Path(args.out).resolve():
+        raise ValueError("--out must differ from --init-from")
+    for name in ("config.json", "model.pt"):
+        if not (source / name).is_file():
+            raise ValueError(f"--init-from requires {name}: {source} (old runs are unsupported)")
+    config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    if config.get("schema_version") != 1:
+        raise ValueError("--init-from requires config schema_version 1")
+    if config.get("vocab") != vc.vocab or config.get("vocab_sha256") != vocab_hash(vc.vocab):
+        raise ValueError("--init-from vocab dictionary/hash mismatch")
+    try:
+        args.model_max_len = config["model"]["max_len"]
+    except KeyError as exc:
+        raise ValueError("--init-from missing model.max_len") from exc
+    return config
+
+
+def initialize_weights(model, config, source, device):
+    expected = {**model.constructor, "table_capacities": table_capacities(model)}
+    actual = config.get("model", {})
+    # Nonpersistent sinusoidal buffers may grow and need not match allocation size.
+    mismatches = [key for key, value in expected.items()
+                  if key not in actual or (key != "pos_table_len" and actual[key] != value)]
+    if mismatches:
+        raise ValueError("--init-from model mismatch: " + ", ".join(mismatches))
+    state = torch.load(Path(source) / "model.pt", map_location=device, weights_only=True)
+    target = model.state_dict()
+    missing = sorted(set(target) - set(state))
+    extra = sorted(set(state) - set(target))
+    shapes = [key for key in target if key in state and state[key].shape != target[key].shape]
+    if missing or extra or shapes:
+        raise ValueError(f"--init-from state_dict mismatch: missing={missing}, extra={extra}, shapes={shapes}")
+    model.load_state_dict(state, strict=True)
+
+
+def write_config(out, args, vc, meta, model, length_stats):
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], check=True,
+                                capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        commit = None
+    init_from = None if not args.init_from else {
+        name + "_sha256": hashlib.sha256((Path(args.init_from) / name).read_bytes()).hexdigest()
+        for name in ("config.json", "model.pt")}
+    config = {"schema_version": 1, "args": vars(args), "vocab": vc.vocab,
+              "vocab_sha256": vocab_hash(vc.vocab),
+              "model": {**model.constructor, "table_capacities": table_capacities(model)},
+              "meta_summary": {**meta, "train_length_stats": length_stats},
+              "git_commit": commit, "torch_version": str(torch.__version__), "init_from": init_from}
+    (out / "config.json").write_text(
+        json.dumps(config, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
 
 
 def main(argv=None):
@@ -624,7 +878,8 @@ def main(argv=None):
     args, _ = parser.parse_known_args(argv)
 
     needs_grammar = (args.struct_pos or args.pointer or args.constrained
-                     or args.ref_legal_mask or args.constrained_samples)
+                     or args.ref_legal_mask or args.constrained_samples
+                     or args.ref_diagnostics or args.wf_probes)
     if needs_grammar and grammar_mask is None:
         raise SystemExit("this configuration requires grammar_mask.py")
     aux_ctx = args.pointer or args.ref_legal_mask   # pointer context needed
@@ -634,30 +889,70 @@ def main(argv=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     vc = Vocab(json.loads(Path(args.vocab).read_text(encoding="utf-8")))
+    init_config = read_initialization(args, vc)
     meta = json.loads(Path(args.meta).read_text(encoding="utf-8"))
-    train_seqs = load_streams(args.train)
+    train_rows = load_rows(args.train)
+    if not train_rows:
+        raise ValueError("train must be nonempty")
+    args.effective_max_len = args.max_len or max(len(r["tokens"]) for r in train_rows)
+    kept = [r for r in train_rows if len(r["tokens"]) <= args.effective_max_len]
+    dropped = [r for r in train_rows if len(r["tokens"]) > args.effective_max_len]
+    if not kept:
+        raise ValueError("--max-len excludes all training samples")
+    def counts(rows):
+        return {"samples": len(rows), "tokens": sum(len(r["tokens"]) - 1 for r in rows)}
+    length_stats = {"effective_max_len": args.effective_max_len,
+                    "raw": counts(train_rows), "kept": counts(kept), "dropped": counts(dropped),
+                    "excluded": [{"sample_id": r.get("sample_id"), "seed": r.get("seed")}
+                                 for r in dropped]}
+    train_seqs = [r["tokens"] for r in kept]
     val_rows = load_rows(args.val)
+    if not val_rows:
+        raise ValueError("val must be nonempty")
     val_seqs = [row["tokens"] for row in val_rows]
     train_aux = [sequence_aux(s, vc, args.struct_pos, aux_ctx) for s in train_seqs]
     val_aux = [sequence_aux(s, vc, args.struct_pos, aux_ctx) for s in val_seqs]
 
     gen_max_len = args.gen_max_len or 2 * meta["max_len"]
+    if args.pos != "learned":
+        gen_max_len = args.gen_max_len or 2 * max(map(len, train_seqs))
+    args.gen_max_len = gen_max_len
+    args.model_max_len = getattr(args, "model_max_len", max(meta["max_len"], gen_max_len))
+    if init_config is not None and args.pos == "learned":
+        eval_splits = [val_rows, load_rows(args.test) if args.test else []]
+        eval_rows = [row for split in eval_splits for row in split]
+        required = max([gen_max_len] + [len(r["tokens"]) - 1 for r in kept + eval_rows])
+        if args.wf_probes:
+            probes = [row for split in eval_splits
+                      for row in sorted(split, key=lambda r: r["sample_id"])[:args.wf_probes]]
+            required = max([required] + [2 * len(r["tokens"]) for r in probes])
+        if required > args.model_max_len:
+            raise ValueError("--init-from learned table capacity is smaller than input/generation budget")
     model = build_model(vc, meta, args, gen_max_len).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    if init_config is not None:
+        initialize_weights(model, init_config, args.init_from, device)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    (out / "length_stats.json").write_text(
+        json.dumps(length_stats, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
+    write_config(out, args, vc, meta, model, length_stats)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     history, best_val, best_epoch, since_best = [], float("inf"), 0, 0
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = run_epoch(
             model, train_seqs, train_aux, args.batch_size, vc, device,
-            optimizer=optimizer, rng=rng)
+            optimizer=optimizer, rng=rng, length_buckets=args.length_buckets,
+            bucket_size=args.bucket_size)
         val_loss, val_acc = run_epoch(
-            model, val_seqs, val_aux, args.batch_size, vc, device)
+            model, val_seqs, val_aux, args.batch_size, vc, device,
+            length_buckets=args.length_buckets, bucket_size=args.bucket_size)
         history.append({"epoch": epoch, "train_loss": train_loss,
                         "train_acc": train_acc, "val_loss": val_loss,
-                        "val_acc": val_acc})
+                        "val_acc": val_acc, "train_kept": len(kept),
+                        "train_dropped_over_max_len": len(dropped),
+                        "train_tokens": length_stats["kept"]["tokens"]})
         print(f"epoch {epoch:3d}  train {train_loss:.4f}/{train_acc:.3f}  "
               f"val {val_loss:.4f}/{val_acc:.3f}")
         if val_loss < best_val:

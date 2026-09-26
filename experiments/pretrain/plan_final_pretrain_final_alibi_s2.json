@@ -1,0 +1,97 @@
+{
+  "blocks": [
+    {
+      "rescore": [
+        {
+          "out_run": "pretrain_final_alibi_s2__n8",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n8"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n12",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n12"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n16",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n16"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n24",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n24"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n32",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n32"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n48",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n48"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n64",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n64"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n96",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n96"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n128",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n128"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n192",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n192"
+        },
+        {
+          "out_run": "pretrain_final_alibi_s2__n256",
+          "source_run": "pretrain_final_alibi_s2",
+          "target_bundle": "data/tok_pretrain_n256"
+        }
+      ],
+      "source_bundle": "data/tok_pretrain_n48",
+      "train": [
+        {
+          "constrained_samples": 200,
+          "epochs": 60,
+          "extra": [
+            "--pos",
+            "alibi",
+            "--pos-table-len",
+            "4096",
+            "--ref-legal-mask",
+            "--length-buckets",
+            "--max-len",
+            "0",
+            "--ref-diagnostics",
+            "--wf-probes",
+            "5",
+            "--d-model",
+            "128",
+            "--num-layers",
+            "4",
+            "--nhead",
+            "4",
+            "--dim-feedforward",
+            "512"
+          ],
+          "name": "pretrain_final_alibi_s2",
+          "num_samples": 200,
+          "patience": 10,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    }
+  ],
+  "plan_id": "pretrain_final_v1_pretrain_final_alibi_s2"
+}

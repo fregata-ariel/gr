@@ -1,0 +1,72 @@
+{
+  "campaign_id": "adaptive24",
+  "campaign_revision": 6,
+  "context": {
+    "baseline_dir": "experiments/mixture_doe/base_target",
+    "data_root": "data",
+    "dataset_version": "697c816084b7bd0686c5cd21fbc3a6236b407a2d",
+    "max_offset": 20,
+    "prefix": "a24",
+    "response_scale": "excess_target",
+    "size": 24,
+    "test_manifests": {
+      "lay": "fce01258ac8c39cbedd923467bb49c814471fc722f5388ef7bcd4abb32bc6e65",
+      "spa": "1eb8e0135c7615e6bb8291f18748e4aff2b1a686797010e1d9dab50f0acb2fc9",
+      "str": "f1414916dd69dcc5ad5a30ef5008f7fde60750b5cac4bb262150c1916401c892"
+    }
+  },
+  "proposals": [
+    {
+      "acquisition": "ts",
+      "campaign_revision": 6,
+      "candidate_id": 106,
+      "factors": {
+        "lay": 0.25,
+        "spa": 0.2,
+        "str": 0.55
+      },
+      "observation_revision": 4,
+      "point": 103,
+      "proposal_id": "q000004",
+      "seeds": [
+        0,
+        1
+      ]
+    },
+    {
+      "acquisition": "ts",
+      "campaign_revision": 6,
+      "candidate_id": 106,
+      "factors": {
+        "lay": 0.25,
+        "spa": 0.2,
+        "str": 0.55
+      },
+      "observation_revision": 4,
+      "point": 103,
+      "proposal_id": "q000005",
+      "seeds": [
+        2,
+        3
+      ]
+    },
+    {
+      "acquisition": "ts",
+      "campaign_revision": 6,
+      "candidate_id": 106,
+      "factors": {
+        "lay": 0.25,
+        "spa": 0.2,
+        "str": 0.55
+      },
+      "observation_revision": 4,
+      "point": 103,
+      "proposal_id": "q000006",
+      "seeds": [
+        4,
+        5
+      ]
+    }
+  ],
+  "version": 1
+}

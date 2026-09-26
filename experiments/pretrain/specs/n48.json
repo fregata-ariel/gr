@@ -1,0 +1,46 @@
+{
+  "family": "mixture",
+  "num_nodes": 48,
+  "params": {
+    "components": [
+      {
+        "family": "layered",
+        "params": {
+          "edge_prob": 0.18,
+          "goto_count": 4,
+          "loop_count": 7,
+          "max_layer_width": 3,
+          "span_mode": "uniform"
+        },
+        "weight": 1
+      },
+      {
+        "family": "structured",
+        "params": {
+          "branch_degree": 2,
+          "goto_count": 4,
+          "loop_count": 7,
+          "max_layer_width": 3,
+          "merge_degree": 3,
+          "span_mode": "uniform",
+          "target_depth": null
+        },
+        "weight": 1
+      },
+      {
+        "family": "spaghetti",
+        "params": {
+          "branch_degree": 2,
+          "goto_count": 4,
+          "loop_count": 7,
+          "max_layer_width": 3,
+          "merge_degree": 3,
+          "spaghetti_rate": 0.1,
+          "span_mode": "uniform",
+          "target_depth": null
+        },
+        "weight": 1
+      }
+    ]
+  }
+}

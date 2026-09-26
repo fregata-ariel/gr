@@ -1,0 +1,81 @@
+# tools/devenv/backup-manifest.txt — what backup.sh copies (gr, 段階 1, 2026-09-26)
+# One entry per line. Prefix:
+#   "+ path"     include, relative to $HOME (directories are copied recursively)
+#   "- pattern"  rsync exclude pattern (applies to every include)
+#   "T /tmp/…"   absolute /tmp path, copied under <generation>/tmp/… so a reboot cannot lose it
+#   "V path"     must-have item checked by `backup.sh verify` (relative to the generation directory)
+#   "S", "E", "D" lines are documentation only (never copied): secrets, external sources, regenerable.
+# Lines starting with "#" are comments. Machine-specific values live in env.sh (see env.sh.example).
+
+## A. git checkout (.git included, so unpushed commits and the uncommitted pyproject.toml/uv.lock survive)
++ Projects/Compiler/gr
+- .venv/
+- .pytest_cache/
+- .ruff_cache/
+- __pycache__/
+- .runner_staging/                # D: staging copies of runs/ made by the local Docker backend (verified identical to runs/)
+# data/ (2.4G, 188 dataset+bundle dirs) and runs/ (0.8G incl. 170 model.pt) are git-ignored but copied:
+# they are the evidence behind docs/design/*.md and are hard-linked across generations, so only deltas cost space.
+
+## B. records outside git and the Claude Code session
++ .claude/projects/-home-fischeri-Projects-Compiler-gr        # transcript (.jsonl), tool-results, memory/
++ .claude/file-history/b84df06a-6417-4e37-b3a6-966467410dd9   # per-session file history (update when the session id changes)
++ .claude/session-env/b84df06a-6417-4e37-b3a6-966467410dd9    # per-session hook scripts
++ .claude/settings.json
++ .claude/plugins                                              # openai-codex companion plugin (installed_plugins.json + cache)
++ .claude/skills
++ .claude/commands
++ .agents/skills/agmsg
++ .config/opencode/opencode.jsonc
++ .codex/config.toml
++ .config/colab-cli/settings.json
++ .config/systemd/user/gr-backup.service
++ .config/systemd/user/gr-backup.timer
++ .config/gr-devenv/env.sh
+
+## C. session scratch (/tmp) — since 2026-09-26 the experiment metadata lives in experiments/ (git); the scratchpad
+##    still holds delegation prompts, OpenCode logs and throwaway files, so it is copied for the record
+T /tmp/claude-1000/-home-fischeri-Projects-Compiler-gr/b84df06a-6417-4e37-b3a6-966467410dd9/scratchpad
+- ar_smoke/
+- ds_smoke_s12/
+- ds_probe/
+- ds_probe2/
+- smoke_ds/
+- rt/smoke/
+- tok_lay2str/
+- *.pid
+
+## V. must-have items (backup.sh verify)
+V home/Projects/Compiler/gr/.git/HEAD
+V home/Projects/Compiler/gr/pyproject.toml
+V home/Projects/Compiler/gr/data
+V home/Projects/Compiler/gr/runs/sweep_summary.md
+V home/.claude/projects/-home-fischeri-Projects-Compiler-gr/memory/MEMORY.md
+V home/.claude/projects/-home-fischeri-Projects-Compiler-gr/b84df06a-6417-4e37-b3a6-966467410dd9.jsonl
+V home/.claude/settings.json
+V home/Projects/Compiler/gr/experiments/sweep/spec_layered_n48.json
+V home/Projects/Compiler/gr/experiments/mixture_doe/obs48_raw.json
+V home/Projects/Compiler/gr/experiments/mixture_doe/base_target/base_lay.jsonl
+
+## D. regenerable (never copied)
+# .venv                      uv sync (pyproject.toml + uv.lock)
+# ~/.cache/uv                uv cache
+# docker image               pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime (7.4G, `docker pull`; only for the local GPU backend)
+# uv tools                   google-colab-cli 0.6.0 (`uv tool install google-colab-cli==0.6.0`), mdtools (~/Projects/Utils/mdtools)
+# node v24 (nvm), codex CLI (~/.codex/packages), opencode (~/.opencode/bin), ~/.opencode, ~/.codex/{logs,sessions,packages}
+# /tmp/oc-wt                 git worktree for OpenCode (`git worktree prune && git worktree add --detach /tmp/oc-wt HEAD`)
+# .runner_staging/           re-created by training/runner on the next local run
+
+## E. external sources (restored by clone / login, not copied)
+# git@github.com:fregata-ariel/gr.git            origin (all branches pushed)
+# git@github.com:fregata-ariel/pyClangAST.git    companion project (read-only reference, own backup)
+# Colab runtime                                   `colab` CLI + Google account
+
+## S. secrets — listed for the record, NEVER copied; re-entered on the target by hand or via Coder secrets
+S .config/colab-cli/token.json
+S .colab-cli-oauth*.json
+S .local/share/opencode/auth.json
+S .codex/auth.json
+S .config/gh/hosts.yml
+S .claude/.credentials.json
+S .ssh

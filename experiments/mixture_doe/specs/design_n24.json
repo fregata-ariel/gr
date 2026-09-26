@@ -1,0 +1,374 @@
+{
+ "1": {
+  "nominal": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "weights": [
+   1,
+   0,
+   0
+  ],
+  "spec": {
+   "family": "layered",
+   "num_nodes": 24,
+   "params": {
+    "max_layer_width": 3,
+    "edge_prob": 0.18,
+    "loop_count": 3,
+    "goto_count": 2,
+    "span_mode": "uniform"
+   }
+  }
+ },
+ "2": {
+  "nominal": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "weights": [
+   0,
+   1,
+   0
+  ],
+  "spec": {
+   "family": "structured",
+   "num_nodes": 24,
+   "params": {
+    "loop_count": 3,
+    "goto_count": 2
+   }
+  }
+ },
+ "3": {
+  "nominal": [
+   0.0,
+   0.0,
+   1.0
+  ],
+  "weights": [
+   0,
+   0,
+   1
+  ],
+  "spec": {
+   "family": "spaghetti",
+   "num_nodes": 24,
+   "params": {
+    "loop_count": 3,
+    "goto_count": 2,
+    "spaghetti_rate": 0.1
+   }
+  }
+ },
+ "4": {
+  "nominal": [
+   0.5,
+   0.5,
+   0.0
+  ],
+  "weights": [
+   1,
+   1,
+   0
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "layered",
+      "weight": 1,
+      "params": {
+       "max_layer_width": 3,
+       "edge_prob": 0.18,
+       "loop_count": 3,
+       "goto_count": 2,
+       "span_mode": "uniform"
+      }
+     },
+     {
+      "family": "structured",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2
+      }
+     }
+    ]
+   }
+  }
+ },
+ "5": {
+  "nominal": [
+   0.5,
+   0.0,
+   0.5
+  ],
+  "weights": [
+   1,
+   0,
+   1
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "layered",
+      "weight": 1,
+      "params": {
+       "max_layer_width": 3,
+       "edge_prob": 0.18,
+       "loop_count": 3,
+       "goto_count": 2,
+       "span_mode": "uniform"
+      }
+     },
+     {
+      "family": "spaghetti",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2,
+       "spaghetti_rate": 0.1
+      }
+     }
+    ]
+   }
+  }
+ },
+ "6": {
+  "nominal": [
+   0.0,
+   0.5,
+   0.5
+  ],
+  "weights": [
+   0,
+   1,
+   1
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "structured",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2
+      }
+     },
+     {
+      "family": "spaghetti",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2,
+       "spaghetti_rate": 0.1
+      }
+     }
+    ]
+   }
+  }
+ },
+ "7": {
+  "nominal": [
+   0.3333333333333333,
+   0.3333333333333333,
+   0.3333333333333333
+  ],
+  "weights": [
+   1,
+   1,
+   1
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "layered",
+      "weight": 1,
+      "params": {
+       "max_layer_width": 3,
+       "edge_prob": 0.18,
+       "loop_count": 3,
+       "goto_count": 2,
+       "span_mode": "uniform"
+      }
+     },
+     {
+      "family": "structured",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2
+      }
+     },
+     {
+      "family": "spaghetti",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2,
+       "spaghetti_rate": 0.1
+      }
+     }
+    ]
+   }
+  }
+ },
+ "8": {
+  "nominal": [
+   0.6666666666666666,
+   0.16666666666666666,
+   0.16666666666666666
+  ],
+  "weights": [
+   4,
+   1,
+   1
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "layered",
+      "weight": 4,
+      "params": {
+       "max_layer_width": 3,
+       "edge_prob": 0.18,
+       "loop_count": 3,
+       "goto_count": 2,
+       "span_mode": "uniform"
+      }
+     },
+     {
+      "family": "structured",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2
+      }
+     },
+     {
+      "family": "spaghetti",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2,
+       "spaghetti_rate": 0.1
+      }
+     }
+    ]
+   }
+  }
+ },
+ "9": {
+  "nominal": [
+   0.16666666666666666,
+   0.6666666666666666,
+   0.16666666666666666
+  ],
+  "weights": [
+   1,
+   4,
+   1
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "layered",
+      "weight": 1,
+      "params": {
+       "max_layer_width": 3,
+       "edge_prob": 0.18,
+       "loop_count": 3,
+       "goto_count": 2,
+       "span_mode": "uniform"
+      }
+     },
+     {
+      "family": "structured",
+      "weight": 4,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2
+      }
+     },
+     {
+      "family": "spaghetti",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2,
+       "spaghetti_rate": 0.1
+      }
+     }
+    ]
+   }
+  }
+ },
+ "10": {
+  "nominal": [
+   0.16666666666666666,
+   0.16666666666666666,
+   0.6666666666666666
+  ],
+  "weights": [
+   1,
+   1,
+   4
+  ],
+  "spec": {
+   "family": "mixture",
+   "num_nodes": 24,
+   "params": {
+    "components": [
+     {
+      "family": "layered",
+      "weight": 1,
+      "params": {
+       "max_layer_width": 3,
+       "edge_prob": 0.18,
+       "loop_count": 3,
+       "goto_count": 2,
+       "span_mode": "uniform"
+      }
+     },
+     {
+      "family": "structured",
+      "weight": 1,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2
+      }
+     },
+     {
+      "family": "spaghetti",
+      "weight": 4,
+      "params": {
+       "loop_count": 3,
+       "goto_count": 2,
+       "spaghetti_rate": 0.1
+      }
+     }
+    ]
+   }
+  }
+ }
+}

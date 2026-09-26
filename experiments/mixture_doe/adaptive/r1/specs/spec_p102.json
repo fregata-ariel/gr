@@ -1,0 +1,36 @@
+{
+  "family": "mixture",
+  "num_nodes": 24,
+  "params": {
+    "components": [
+      {
+        "family": "layered",
+        "params": {
+          "edge_prob": 0.18,
+          "goto_count": 2,
+          "loop_count": 3,
+          "max_layer_width": 3,
+          "span_mode": "uniform"
+        },
+        "weight": 0.6
+      },
+      {
+        "family": "structured",
+        "params": {
+          "goto_count": 2,
+          "loop_count": 3
+        },
+        "weight": 0.05
+      },
+      {
+        "family": "spaghetti",
+        "params": {
+          "goto_count": 2,
+          "loop_count": 3,
+          "spaghetti_rate": 0.1
+        },
+        "weight": 0.35
+      }
+    ]
+  }
+}

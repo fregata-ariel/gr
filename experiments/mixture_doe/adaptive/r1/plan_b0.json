@@ -1,0 +1,56 @@
+{
+  "blocks": [
+    {
+      "rescore": [
+        {
+          "out_run": "a24_s24_p1002str_mask_n24_s0",
+          "source_run": "a24_s24_p100_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p100_str"
+        },
+        {
+          "out_run": "a24_s24_p1002spa_mask_n24_s0",
+          "source_run": "a24_s24_p100_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p100_spa"
+        },
+        {
+          "out_run": "a24_s24_p1002str_mask_n24_s1",
+          "source_run": "a24_s24_p100_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p100_str"
+        },
+        {
+          "out_run": "a24_s24_p1002spa_mask_n24_s1",
+          "source_run": "a24_s24_p100_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p100_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p100_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "a24_s24_p100_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "a24_s24_p100_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        }
+      ]
+    }
+  ],
+  "plan_id": "adaptive24_r2_b0"
+}

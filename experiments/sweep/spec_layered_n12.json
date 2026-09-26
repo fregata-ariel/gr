@@ -1,0 +1,1 @@
+{"family": "layered", "num_nodes": 12, "params": {"max_layer_width": 3, "edge_prob": 0.18, "loop_count": 1, "goto_count": 1, "span_mode": "uniform"}}
