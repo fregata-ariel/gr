@@ -136,6 +136,7 @@ colab CLI は runner 内で直列化される。
 T4 との比較(Q8-4)は 2026-09-16 に完了。Colab アダプタの実機確認は 2026-09-26 に完了:
 受け入れ Plan `accept_colab_n12`(学習 2 run + 再スコア 2 件、既定バックエンド colab、T4)が
 セッション確保から `RUN-DONE` まで 1.5 分で通り、`backend.json` に `kind: colab / gpu: T4` が記録され、
-終了後にセッションは自動解放された(`colab sessions` に残らない)。colab CLI は 0.6.0 で検証
+終了後にセッションは自動解放された(`colab sessions` に残らない)。同日、`--gpu L4` でも同じ Plan が通り
+(`accept_colab_l4_n12`、`backend.json` に `gpu: L4`、NLL は T4 と 1e-3 以内で一致、解放も確認)。colab CLI は 0.6.0 で検証
 (0.7.2 への更新は再試験してから)。scratchpad の `sweep_loop.sh` 系はルーターに置き換え済みとして
 以後使わない。K8s バックエンドは同じ Protocol の 3 つ目として後日。

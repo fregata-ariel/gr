@@ -1,0 +1,46 @@
+{
+  "blocks": [
+    {
+      "rescore": [
+        {
+          "out_run": "accl_s12_lay2str_mask_n12_s0",
+          "source_run": "accl_s12_lay_mask_n12_s0",
+          "target_bundle": "data/tok_s12_lay2str"
+        },
+        {
+          "out_run": "accl_s12_lay2str_mask_n12_s1",
+          "source_run": "accl_s12_lay_mask_n12_s1",
+          "target_bundle": "data/tok_s12_lay2str"
+        }
+      ],
+      "source_bundle": "data/tok_s12_lay",
+      "train": [
+        {
+          "constrained_samples": 20,
+          "epochs": 2,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "accl_s12_lay_mask_n12_s0",
+          "num_samples": 20,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 20,
+          "epochs": 2,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "accl_s12_lay_mask_n12_s1",
+          "num_samples": 20,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        }
+      ]
+    }
+  ],
+  "plan_id": "accept_colab_l4_n12"
+}
