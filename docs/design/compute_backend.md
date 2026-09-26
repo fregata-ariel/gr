@@ -140,3 +140,23 @@ T4 との比較(Q8-4)は 2026-09-16 に完了。Colab アダプタの実機確�
 (`accept_colab_l4_n12`、`backend.json` に `gpu: L4`、NLL は T4 と 1e-3 以内で一致、解放も確認)。colab CLI は 0.6.0 で検証
 (0.7.2 への更新は再試験してから)。scratchpad の `sweep_loop.sh` 系はルーターに置き換え済みとして
 以後使わない。K8s バックエンドは同じ Protocol の 3 つ目として後日。
+
+## 6. Colab Pro の並列数と compute unit(実測 2026-09-26)
+
+比較 Plan(L4、セッション `sw`)の実行中に、ランナーと同じロック(`~/.cache/gr-runner/colab.lock`)を取って
+`experiments/runner/colab_parallel_test.sh` を走らせた(ログ `colab_parallel_test.log`)。
+
+- **同時セッションは 3 まで**。L4 1 本に T4 を 2 本追加できたが、3 本目の `colab new` は HTTP 412 Precondition
+  Failed(`TooManyAssignmentsError`)で拒否された。通説どおり(Pro の上限 3)。
+- **消費率**(`colab usage`、CLI 0.7.2 を `uvx` で隔離実行。固定中の 0.6.0 には `usage` がない):
+  L4 単独 1.54 CU/時、L4 + T4 × 2 で 3.68 CU/時 → **T4 ≈ 1.07 CU/時、L4 ≈ 1.54 CU/時**。2024 年の第三者計測
+  (T4 1.6〜2.0、L4 3.0)より安い。残高は測定開始時 199.03 CU。
+- 見積り: 事前学習の比較 run(60 epoch、20k サンプル)は L4 で 13〜16 分 ≈ 0.35〜0.4 CU/run。最終 3 seed +
+  比較 3 本 + 再スコア 66 件で 3 CU 程度。逐次設計の n24 ラウンド(6 run + 再スコア)は 1 CU 未満。
+- **ランナーへの含意**: ColabBackend は `colab exec` の間もグローバルロックを握るため、セッション名を分けても
+  Plan を並列に流せない(exec が直列化される)。CLI 自身が `sessions.json.lock` で状態ファイルを保護している
+  ので、グローバルロックは `new` / `stop` / `sessions` に限定し、`exec` / `upload` / `download` はセッション別
+  ロックにすれば、3 セッション(例: 最終 3 seed を 3 本同時)まで並列化できる。実装は別タスク(要テスト)。
+- CU の照会手順: `HOME=<token のコピーを置いた隔離 HOME> uvx --from google-colab-cli==0.7.2 colab usage`
+  (0.7.2 が token.json を書き換えても 0.6.0 側に影響しないようにするため。隔離 HOME は `~/.cache/gr-runner/`
+  配下でバックアップ対象外)。
