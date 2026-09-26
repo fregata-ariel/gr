@@ -1,0 +1,23 @@
+{
+  "chosen_pos": "alibi",
+  "decided": "2026-09-26",
+  "id_cost_vs_sinusoidal": "+0.0014 nats/token (CI includes 0)",
+  "id_token_micro": {
+    "alibi": 0.5794503014996333,
+    "none": 0.6293223780791465,
+    "sinusoidal": 0.5780285862431899
+  },
+  "n192_nats_per_token": {
+    "alibi": 0.6576102250535503,
+    "none": 0.755990725606654,
+    "sinusoidal": 0.8846064302845703
+  },
+  "n256_nats_per_token": {
+    "alibi": 0.6967295501588674,
+    "none": 0.8413383321927348,
+    "sinusoidal": 1.057876407133542
+  },
+  "note": "docs/design/pretrain_longseq.md \u00a75.3",
+  "rule": "n192 retained token-micro NLL minimum; paired token-weighted bootstrap CI95 excludes zero against both alternatives",
+  "selection_n": 192
+}
