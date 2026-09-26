@@ -405,7 +405,7 @@ def test_tiny_simulate_cli(tmp_path, monkeypatch):
     small = sd.Space(("lay", "str", "spa"), tuple(dict(zip(("lay", "str", "spa"), row)) for row in sd._FIXED), ("lay", "str", "spa"))
     monkeypatch.setattr(sd, "_simulation_space", lambda: small)
     real_summaries = sd._summaries
-    monkeypatch.setattr(sd, "_summaries", lambda c, fits, grid: real_summaries(c, fits, grid, count=32))
+    monkeypatch.setattr(sd, "_summaries", lambda c, fits, grid, *args, **kwargs: real_summaries(c, fits, grid, count=32))
     out = tmp_path / "sim.md"
     assert sd.main(["simulate", "--rounds", "1", "--k", "1", "--seeds", "1", "--repeats", "1", "--out", str(out)]) == 0
     payload = json.loads(out.with_suffix(".json").read_text())

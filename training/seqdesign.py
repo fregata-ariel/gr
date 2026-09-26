@@ -377,6 +377,13 @@ def normal_draw(rng: random.Random) -> float:
     return math.sqrt(-2 * math.log(1 - rng.random())) * math.cos(2 * math.pi * rng.random())
 
 
+def normal_draws(rng: random.Random, count: int) -> Array:
+    """normal_draw を count 回呼んだのと同じ列を、一様乱数だけ逐次に取り出して numpy で変換する。"""
+    _integer(count)
+    uniform = np.asarray([rng.random() for _ in range(2 * count)], dtype=float).reshape(count, 2)
+    return np.sqrt(-2 * np.log(1 - uniform[:, 0])) * np.cos(2 * math.pi * uniform[:, 1])
+
+
 def uniform_index(size: int, rng: random.Random) -> int:
     _integer(size, 1)
     return math.floor(size * rng.random())
@@ -557,8 +564,7 @@ def _samples(distributions: Sequence[Posterior], count: int, rng: random.Random,
              *, latent: bool = False) -> Array:
     # 乱数順は draw → response → coordinate。行列積だけをまとめて高速化する。
     size = len(distributions[0].mean)
-    normals = np.asarray([normal_draw(rng) for _ in range(count * len(distributions) * size)])
-    normals = normals.reshape(count, len(distributions), size)
+    normals = normal_draws(rng, count * len(distributions) * size).reshape(count, len(distributions), size)
     result = np.empty_like(normals)
     for r, p in enumerate(distributions):
         if latent:
@@ -666,7 +672,7 @@ def _summaries(c: Campaign, fits: Sequence[GPFit], coordinates: Array,
     distributions = tuple(posterior(f, coordinates) for f in fits)
     rng = random.Random(0)
     samples = _samples(distributions, count, rng, latent=True)
-    noise = np.asarray([normal_draw(rng) for _ in range(samples.size)]).reshape(samples.shape)
+    noise = normal_draws(rng, samples.size).reshape(samples.shape)
     predictive = samples + noise * np.asarray([f.s * math.sqrt(f.v) for f in fits])[None, :, None]
     result = {}
     for name in (*c.responses, "bal", "max"):
@@ -920,14 +926,15 @@ def _retrospective(obs_path: Any, space: Space, directory: Any) -> list[dict[str
 
 
 def simulate(*, surface: str = "scheffe", rounds: int = 8, k: int = 3, repeats: int = 20,
-             seeds: int = 2, seed: int = 20260926, out: Any = "sim.md", obs: Any = None) -> dict[str, Any]:
+             seeds: int = 2, seed: int = 20260926, out: Any = "sim.md", obs: Any = None,
+             summary_samples: int = 512) -> dict[str, Any]:
     """共通の事前生成ノイズで全条件・全手法を比較する。実機は起動しない。"""
     from pathlib import Path
     import platform
     from training.mixture_doe import Observation
     if surface != "scheffe":
         raise ValueError("unknown surface")
-    for value in (rounds, k, repeats, seeds):
+    for value in (rounds, k, repeats, seeds, summary_samples):
         _integer(value, 1)
     if type(seed) is not int:
         raise ValueError("seed must be an integer")
@@ -953,7 +960,7 @@ def simulate(*, surface: str = "scheffe", rounds: int = 8, k: int = 3, repeats: 
                 optimum = float(true_objective.min())
                 empty = _empty(space, objective, seed + repeat)
                 prior_fits = _fits(empty)
-                prior = _summaries(empty, prior_fits, grid)
+                prior = _summaries(empty, prior_fits, grid, summary_samples)
                 for method in methods:
                     c, models, summaries = empty, prior_fits, prior
                     rng = DeterministicRNG(seed + repeat)
@@ -979,7 +986,7 @@ def simulate(*, surface: str = "scheffe", rounds: int = 8, k: int = 3, repeats: 
                         pc, pw = _coverage(frozen, actual, c.responses, grid[sample_indices].max(axis=1) >= .95, "predictive")
                         c = observe(c, rows)
                         models = _fits(c)
-                        summaries = _summaries(c, models, grid)
+                        summaries = _summaries(c, models, grid, summary_samples)
                         lc, lw = _coverage(summaries, truth, c.responses, grid.max(axis=1) >= .95, "latent")
                         rec = int(np.argmin(summaries[objective]["mean"]))
                         results.append({"condition": f"{variant}:{noise_condition}", "objective": objective,
@@ -990,6 +997,7 @@ def simulate(*, surface: str = "scheffe", rounds: int = 8, k: int = 3, repeats: 
                             "interval_width": {"predictive": pw, "latent": lw}})
     path = Path(out)
     config = {"surface": surface, "rounds": rounds, "k": k, "repeats": repeats, "seeds": seeds, "seed": seed,
+              "summary_samples": summary_samples,
               "out": str(out), "obs": None if obs is None else str(obs), "repeat_seeds": [seed+r for r in range(repeats)],
               "report_seed": 0, "retrospective_seed": 20260926, "candidates": list(space.candidates),
               "noise_conditions": conditions, "methods": methods, "objectives": ["bal", "max"],
@@ -1068,7 +1076,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     rep.add_argument("--fig-dir", type=Path)
     sim = commands.add_parser("simulate")
     sim.add_argument("--surface", choices=("scheffe",), default="scheffe")
-    for name, default in (("rounds", 8), ("k", 3), ("seeds", 2), ("repeats", 20), ("seed", 20260926)):
+    for name, default in (("rounds", 8), ("k", 3), ("seeds", 2), ("repeats", 20), ("seed", 20260926),
+                          ("summary-samples", 512)):
         sim.add_argument(f"--{name}", type=int, default=default)
     sim.add_argument("--out", required=True, type=Path)
     sim.add_argument("--obs", type=Path)
@@ -1076,7 +1085,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parser.parse_args(argv)
         if args.command == "simulate":
             simulate(surface=args.surface, rounds=args.rounds, k=args.k, seeds=args.seeds,
-                     repeats=args.repeats, seed=args.seed, out=args.out, obs=args.obs)
+                     repeats=args.repeats, seed=args.seed, out=args.out, obs=args.obs,
+                     summary_samples=args.summary_samples)
             return 0
         path = args.campaign
         if args.command == "init":
