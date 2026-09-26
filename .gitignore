@@ -38,3 +38,7 @@ tools/devenv/env.sh
 # Experiment records: baselines are recomputable (training.info_baseline), logs are ignored by *.log above
 experiments/**/base_*/
 experiments/**/base[0-9]*_*/
+
+# Full simulation outputs (47 MB / 11 MB; kept on disk and in backups, summarised in sim_summary.md)
+experiments/seqdesign_sim/sim.json
+experiments/seqdesign_sim/sim.md

@@ -1,0 +1,61 @@
+{
+  "campaign_id": "retrospective_bal",
+  "campaign_revision": 7,
+  "context": {
+    "response_scale": "excess_target"
+  },
+  "proposals": [
+    {
+      "acquisition": "ts",
+      "campaign_revision": 7,
+      "candidate_id": 159,
+      "factors": {
+        "lay": 0.45,
+        "spa": 0.25,
+        "str": 0.3
+      },
+      "observation_revision": 6,
+      "point": 100,
+      "proposal_id": "q000001",
+      "seeds": [
+        0,
+        1
+      ]
+    },
+    {
+      "acquisition": "ts",
+      "campaign_revision": 7,
+      "candidate_id": 126,
+      "factors": {
+        "lay": 0.35,
+        "spa": 0.65,
+        "str": 0.0
+      },
+      "observation_revision": 6,
+      "point": 101,
+      "proposal_id": "q000002",
+      "seeds": [
+        0,
+        1
+      ]
+    },
+    {
+      "acquisition": "ts",
+      "campaign_revision": 7,
+      "candidate_id": 190,
+      "factors": {
+        "lay": 0.6,
+        "spa": 0.2,
+        "str": 0.2
+      },
+      "observation_revision": 6,
+      "point": 102,
+      "proposal_id": "q000003",
+      "seeds": [
+        0,
+        1
+      ]
+    }
+  ],
+  "version": 1
+}
