@@ -1,0 +1,31 @@
+{
+  "campaign_id": "adaptive24",
+  "campaign_revision": 6,
+  "context": {
+    "baseline_dir": "experiments/mixture_doe/base_target",
+    "data_root": "data",
+    "dataset_version": "697c816084b7bd0686c5cd21fbc3a6236b407a2d",
+    "max_offset": 20,
+    "prefix": "a24",
+    "response_scale": "excess_target",
+    "size": 24,
+    "test_manifests": {
+      "lay": "fce01258ac8c39cbedd923467bb49c814471fc722f5388ef7bcd4abb32bc6e65",
+      "spa": "1eb8e0135c7615e6bb8291f18748e4aff2b1a686797010e1d9dab50f0acb2fc9",
+      "str": "f1414916dd69dcc5ad5a30ef5008f7fde60750b5cac4bb262150c1916401c892"
+    }
+  },
+  "files": {
+    "collect.sh": "3f93c989c567b500902b243e273eee01f9138c884382929264fb8741c0f17294",
+    "generate.sh": "34fb898b6394c1d7b2dd2ef67df8169d1fc240f42b5fbf812239544b3038707e",
+    "plan.json": "e3b011c75c22bde7cbed4d8441f40d2a56dcc0ba7c56263447343fedbae9a33c",
+    "specs/spec_p103.json": "7b50460d2c53f805bb21ce319d7d56ea8d7aa131ceba85cf76f2ef2d4b6b7aa8",
+    "tokenize.sh": "70fab3e55f21c8693aac6b8dc02fa2fbca618fa967978acc60839471099bd5ad"
+  },
+  "proposal_ids": [
+    "q000004",
+    "q000005",
+    "q000006"
+  ],
+  "version": 1
+}
