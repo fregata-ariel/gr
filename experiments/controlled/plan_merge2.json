@@ -1,0 +1,1 @@
+{"train":{"ranges":{"max_in_degree":[null,2]}},"val":{"ranges":{"max_in_degree":[null,2]}},"test":{"ranges":{"max_in_degree":[null,2]}}}

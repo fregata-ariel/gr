@@ -27,6 +27,7 @@ training/        — AR baseline: local tokenize/eval (cfg_reducer, no torch),
   runner/        — compute backend router: Plan JSON -> Colab CLI or local Docker GPU
                    (stdlib only; docs/design/compute_backend*.md)
 docs/            — Discussion logs and design notes
+experiments/     — specs, Plan JSON, observations and scripts behind runs/ (experiments/README.md)
 tests/           — Regression tests for engine, algorithm, motif, metagraph, store
 ```
 
@@ -71,6 +72,7 @@ while a runner is active (it serialises them through `~/.cache/gr-runner/colab.l
 `tools/devenv/` holds the manifest-driven generation backup (`backup.sh`, installed by `install.sh` as a
 daily systemd user timer to `/mnt/data/backups/gr`) and `restore.sh`, which relocates the checkout and the
 Claude Code session to a new project path (Coder migration). Scope and procedure: `docs/devenv.md`.
+Experiment metadata (specs, Plans, observations) lives in `experiments/`, not in the session scratchpad.
 The manifest's per-session entries (file-history, session-env, the `/tmp` scratchpad) name the session id;
 update them when the session changes, then re-run `install.sh`.
 

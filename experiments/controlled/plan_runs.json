@@ -1,0 +1,57 @@
+{
+ "sources": {
+  "layered": {
+   "bundle": "tok_c_layered",
+   "configs": [
+    "base",
+    "mask",
+    "ptr"
+   ]
+  },
+  "structured": {
+   "bundle": "tok_c_structured",
+   "configs": [
+    "base",
+    "mask"
+   ]
+  },
+  "depth1": {
+   "bundle": "tok_c_depth_id",
+   "configs": [
+    "base",
+    "mask"
+   ]
+  },
+  "merge2": {
+   "bundle": "tok_c_merge_id",
+   "configs": [
+    "base",
+    "mask"
+   ]
+  },
+  "balanced": {
+   "bundle": "tok_c_balanced",
+   "configs": [
+    "base",
+    "mask"
+   ]
+  }
+ },
+ "targets": {
+  "layered": [
+   "tok_c_lay2str",
+   "tok_c_lay2spa"
+  ],
+  "structured": [
+   "tok_c_str2lay",
+   "tok_c_str2spa"
+  ],
+  "depth1": [
+   "tok_c_depth"
+  ],
+  "merge2": [
+   "tok_c_merge"
+  ],
+  "balanced": []
+ }
+}

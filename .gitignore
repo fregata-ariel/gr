@@ -34,3 +34,6 @@ runs/
 
 # Machine-specific backup settings (see tools/devenv/env.sh.example)
 tools/devenv/env.sh
+
+# Experiment records: baselines are recomputable (training.info_baseline), logs are ignored by *.log above
+experiments/**/base_*/

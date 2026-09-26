@@ -336,8 +336,8 @@ base も同じ順位(mixed: 0.821 / 0.335 / 0.609 / 0.290 / 0.361)。
 設計: n ∈ {12, 16, 24, 32, 48}、各 n で layered(v1 相当)/ structured / spaghetti / mixed の dataset を
 現行 version(R2 修正後)で生成(seed 基点 700000 + i·10000、structured / spaghetti / mixed は
 layered を exclude)。source は layered と mixed、構成は mask のみ、seed 0–2。target は structured
-と spaghetti(混合は layered test にも再採点)。集計は `scratchpad/sw/sweep_summary.py`(OpenCode
-試作)→ `runs/sweep_summary.md`。n12 は同型重複が多く structured test 144 / 混合 train 1631。
+と spaghetti(混合は layered test にも再採点)。集計は `experiments/sweep/sweep_summary.py`(OpenCode
+試作、2026-09-26 に scratchpad から移動)→ `runs/sweep_summary.md`。n12 は同型重複が多く structured test 144 / 混合 train 1631。
 実行先: n12〜n24 は Colab T4、n32 / n48 はローカル RTX 2080 Ti(`training/runner`、`--backend local`、
 各 run の `backend.json` に記録)。比較は同一 n 内なので実行先の違いは結論に影響しない(`compute_backend.md` §3.3)。
 

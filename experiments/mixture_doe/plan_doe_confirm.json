@@ -1,0 +1,151 @@
+{
+  "blocks": [
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p112str_mask_n24_s0",
+          "source_run": "d_s24_p11_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p11_str"
+        },
+        {
+          "out_run": "d_s24_p112spa_mask_n24_s0",
+          "source_run": "d_s24_p11_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p11_spa"
+        },
+        {
+          "out_run": "d_s24_p112str_mask_n24_s1",
+          "source_run": "d_s24_p11_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p11_str"
+        },
+        {
+          "out_run": "d_s24_p112spa_mask_n24_s1",
+          "source_run": "d_s24_p11_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p11_spa"
+        },
+        {
+          "out_run": "d_s24_p112str_mask_n24_s2",
+          "source_run": "d_s24_p11_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p11_str"
+        },
+        {
+          "out_run": "d_s24_p112spa_mask_n24_s2",
+          "source_run": "d_s24_p11_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p11_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p11_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p11_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p11_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p11_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p122str_mask_n24_s0",
+          "source_run": "d_s24_p12_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p12_str"
+        },
+        {
+          "out_run": "d_s24_p122spa_mask_n24_s0",
+          "source_run": "d_s24_p12_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p12_spa"
+        },
+        {
+          "out_run": "d_s24_p122str_mask_n24_s1",
+          "source_run": "d_s24_p12_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p12_str"
+        },
+        {
+          "out_run": "d_s24_p122spa_mask_n24_s1",
+          "source_run": "d_s24_p12_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p12_spa"
+        },
+        {
+          "out_run": "d_s24_p122str_mask_n24_s2",
+          "source_run": "d_s24_p12_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p12_str"
+        },
+        {
+          "out_run": "d_s24_p122spa_mask_n24_s2",
+          "source_run": "d_s24_p12_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p12_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p12_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p12_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p12_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p12_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    }
+  ],
+  "plan_id": "doe_mix_n24_confirm"
+}

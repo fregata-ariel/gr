@@ -33,7 +33,8 @@
 + .config/systemd/user/gr-backup.timer
 + .config/gr-devenv/env.sh
 
-## C. session scratch (/tmp) — specs, Plan JSON, wrappers, run logs, DoE observations and baselines
+## C. session scratch (/tmp) — since 2026-09-26 the experiment metadata lives in experiments/ (git); the scratchpad
+##    still holds delegation prompts, OpenCode logs and throwaway files, so it is copied for the record
 T /tmp/claude-1000/-home-fischeri-Projects-Compiler-gr/b84df06a-6417-4e37-b3a6-966467410dd9/scratchpad
 - ar_smoke/
 - ds_smoke_s12/
@@ -52,8 +53,9 @@ V home/Projects/Compiler/gr/runs/sweep_summary.md
 V home/.claude/projects/-home-fischeri-Projects-Compiler-gr/memory/MEMORY.md
 V home/.claude/projects/-home-fischeri-Projects-Compiler-gr/b84df06a-6417-4e37-b3a6-966467410dd9.jsonl
 V home/.claude/settings.json
-V tmp/claude-1000/-home-fischeri-Projects-Compiler-gr/b84df06a-6417-4e37-b3a6-966467410dd9/scratchpad/sw/spec_layered_n48.json
-V tmp/claude-1000/-home-fischeri-Projects-Compiler-gr/b84df06a-6417-4e37-b3a6-966467410dd9/scratchpad/doe/obs48_raw.json
+V home/Projects/Compiler/gr/experiments/sweep/spec_layered_n48.json
+V home/Projects/Compiler/gr/experiments/mixture_doe/obs48_raw.json
+V home/Projects/Compiler/gr/experiments/mixture_doe/base_target/base_lay.jsonl
 
 ## D. regenerable (never copied)
 # .venv                      uv sync (pyproject.toml + uv.lock)

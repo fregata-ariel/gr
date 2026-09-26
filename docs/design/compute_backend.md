@@ -75,6 +75,8 @@ CLI          — `python -m training.runner --plan plan.json --backend auto`
   `/content` / `/work` を切り替える。`train_ar.py` の既定引数も `GR_ROOT` を参照する。
 - テストは FakeBackend で Router / Plan の分岐と冪等性を検証する(torch 不要)。
 - 将来の K8s バックエンドは同じ Protocol の 3 つ目の実装(Job + PVC)として追加する。
+  2026-09-26 決定(Q11-1): Coder ワークスペース自体には GPU / Docker を入れず、必要時に GPU Pod を
+  ワーカーとして立てる。したがって 3 つ目のバックエンドは「Coder から Pod を起動して Plan を流す」形になる。
   今回は対象外(このマシンに kubectl がない)。
 
 ### 3.2 イメージ

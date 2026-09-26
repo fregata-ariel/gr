@@ -32,9 +32,11 @@ Python 依存: `matplotlib`, `networkx`(実行時)、`pytest`, `ty`(開発)、Py
 
 ### C. セッションの scratchpad(`/tmp`、再起動で消える → 世代の `tmp/` 配下にコピー)
 
-`/tmp/claude-1000/-home-fischeri-Projects-Compiler-gr/<sid>/scratchpad/`(25 MB)。実験の再現に必要なのは
-`sw/spec_<family>_n<N>.json`(スイープ spec、他の n の spec の写し元)、`doe/`(spec、Plan JSON、観測値 `obs*.json`、
-基準符号長 `base_*/`)、`rt/plan_*.json`、`sw/sweep_summary.py`、各実験の実行ログ。smoke/probe 用データと PID は除外。
+`/tmp/claude-1000/-home-fischeri-Projects-Compiler-gr/<sid>/scratchpad/`(25 MB)。実験の再現に必要なもの
+(スイープ spec、DoE の spec / Plan / 観測値、ルーターの Plan、集計スクリプト、実験 C とルーター導入前の記録)は
+2026-09-26 に `experiments/` へ移して git 管理にした(A11-3、`experiments/README.md`)。基準符号長と実行ログは
+gitignore のまま `experiments/` に置く(チェックアウトごとバックアップされる)。scratchpad に残るのは委任プロンプト、
+OpenCode の出力、smoke/probe の一時物で、記録としてコピーはするが作業再開には要らない。
 
 ### D. 再生成できるもの(コピーしない)
 
@@ -78,6 +80,8 @@ tools/devenv/restore.sh /mnt/data/backups/gr/latest /home/coder/gr             #
 - 続いて手作業: 秘密情報のログイン、`uv sync`、`uv run pytest -q`、`git worktree prune`、必要なら Docker イメージの pull。
   再開は `claude --resume <sid>`。transcript とメモリ内の旧絶対パスは移行先では無効なので、再開時に新パスを伝える。
 - 状態: 手元で dry-run(疑似的な新パス)まで確認。実機での復元は Coder ワークスペース側で行う(段階 3)。
+- A11-5: 移行先でも同じパス `/home/fischeri/Projects/Compiler/gr` を使う(ユーザー `fischeri`、uid 1000)。
+  このときセッションのキーも scratchpad のパスも変わらないので、`restore.sh <世代>`(第 2 引数なし)で足りる。
 
 ## 4. 段階計画
 
@@ -86,7 +90,7 @@ tools/devenv/restore.sh /mnt/data/backups/gr/latest /home/coder/gr             #
 | 1 | 範囲確定(本書 §1、manifest) | 完了 |
 | 2 | 継続バックアップ(timer + verify) | 完了、運用中 |
 | 3 | 移行スクリプト(restore.sh)と Coder 側の確認 | スクリプト作成・dry-run 済み、実機未検証 |
-| 4 | Coder 前提の整理(docs/handoff_questions.md Q11) | 回答待ち |
+| 4 | Coder 前提の整理(docs/handoff_questions.md Q11 / A11) | 回答済み: GPU/Docker はワークスペース外の Pod、data/runs 持ち込み、experiments/ を git 管理、Colab CLI 0.6.0 固定、同一パスで resume |
 
-Q11 の主な論点: Coder ワークスペースの GPU/Docker の有無、`data/`・`runs/` を持ち込むか再生成するか、scratchpad の実験メタデータを
-リポジトリ内 `experiments/` に移して git 管理するか、Colab CLI のバージョン固定、セッションを同一 ID で再開するか新規セッションで始めるか。
+次の段階: Coder ワークスペースを用意したら `restore.sh` を実機で通し、`claude --resume` を確認する。GPU Pod ワーカーは
+`compute_backend.md` の 3 つ目のバックエンドとして設計する(Coder から Pod を起動して Plan を流す)。

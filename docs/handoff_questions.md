@@ -411,3 +411,13 @@ layered で最大・spaghetti で最小。bal は平坦のまま(重心 / 2:1:1 
 4. **Colab CLI のバージョン**: 0.6.0 で検証済み、0.7.2 が出ています。移行先でも 0.6.0 に固定し、更新は別途アダプタを再試験してからにします。推奨: 固定。
 5. **セッションの引越し方法**: (a) 同じセッション ID を `claude --resume` で継続、(b) メモリと docs だけ持ち込み新規セッションで開始。
    推奨: (a) を試し、旧パスの参照で混乱するようなら (b)。どちらでも memory/ と docs/handoff*.md が真の引き継ぎ資料です。
+
+## A11. Coder Web IDE への移行(2026-09-26 回答)
+
+1. Coder ワークスペース自体には GPU / Docker を入れない。必要なときにワーカーとして Pod を立てられるよう設定する
+   (→ 既定バックエンドは colab のまま、Pod ワーカーは `compute_backend.md` の 3 つ目のバックエンドとして後日)。
+2. `data/` と `runs/` は持ち込む(restore.sh の既定)。
+3. scratchpad の実験メタデータは git 管理に入れる(→ `experiments/`、同日実施)。
+4. Colab CLI はまず 0.6.0 に固定する。
+5. `claude --resume` を試す。そのために現在のプロジェクトパス `/home/fischeri/Projects/Compiler/gr` をそのまま移行先でも使う
+   (ユーザー `fischeri`、home `/home/fischeri`、uid 1000 ならセッションのキーも scratchpad のパスも変わらない)。

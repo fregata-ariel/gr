@@ -1,0 +1,735 @@
+{
+  "blocks": [
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p12str_mask_n24_s0",
+          "source_run": "d_s24_p1_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p1_str"
+        },
+        {
+          "out_run": "d_s24_p12spa_mask_n24_s0",
+          "source_run": "d_s24_p1_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p1_spa"
+        },
+        {
+          "out_run": "d_s24_p12str_mask_n24_s1",
+          "source_run": "d_s24_p1_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p1_str"
+        },
+        {
+          "out_run": "d_s24_p12spa_mask_n24_s1",
+          "source_run": "d_s24_p1_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p1_spa"
+        },
+        {
+          "out_run": "d_s24_p12str_mask_n24_s2",
+          "source_run": "d_s24_p1_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p1_str"
+        },
+        {
+          "out_run": "d_s24_p12spa_mask_n24_s2",
+          "source_run": "d_s24_p1_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p1_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p1_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p1_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p1_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p1_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p22str_mask_n24_s0",
+          "source_run": "d_s24_p2_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p2_str"
+        },
+        {
+          "out_run": "d_s24_p22spa_mask_n24_s0",
+          "source_run": "d_s24_p2_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p2_spa"
+        },
+        {
+          "out_run": "d_s24_p22str_mask_n24_s1",
+          "source_run": "d_s24_p2_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p2_str"
+        },
+        {
+          "out_run": "d_s24_p22spa_mask_n24_s1",
+          "source_run": "d_s24_p2_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p2_spa"
+        },
+        {
+          "out_run": "d_s24_p22str_mask_n24_s2",
+          "source_run": "d_s24_p2_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p2_str"
+        },
+        {
+          "out_run": "d_s24_p22spa_mask_n24_s2",
+          "source_run": "d_s24_p2_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p2_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p2_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p2_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p2_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p2_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p32str_mask_n24_s0",
+          "source_run": "d_s24_p3_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p3_str"
+        },
+        {
+          "out_run": "d_s24_p32spa_mask_n24_s0",
+          "source_run": "d_s24_p3_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p3_spa"
+        },
+        {
+          "out_run": "d_s24_p32str_mask_n24_s1",
+          "source_run": "d_s24_p3_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p3_str"
+        },
+        {
+          "out_run": "d_s24_p32spa_mask_n24_s1",
+          "source_run": "d_s24_p3_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p3_spa"
+        },
+        {
+          "out_run": "d_s24_p32str_mask_n24_s2",
+          "source_run": "d_s24_p3_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p3_str"
+        },
+        {
+          "out_run": "d_s24_p32spa_mask_n24_s2",
+          "source_run": "d_s24_p3_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p3_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p3_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p3_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p3_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p3_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p42str_mask_n24_s0",
+          "source_run": "d_s24_p4_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p4_str"
+        },
+        {
+          "out_run": "d_s24_p42spa_mask_n24_s0",
+          "source_run": "d_s24_p4_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p4_spa"
+        },
+        {
+          "out_run": "d_s24_p42str_mask_n24_s1",
+          "source_run": "d_s24_p4_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p4_str"
+        },
+        {
+          "out_run": "d_s24_p42spa_mask_n24_s1",
+          "source_run": "d_s24_p4_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p4_spa"
+        },
+        {
+          "out_run": "d_s24_p42str_mask_n24_s2",
+          "source_run": "d_s24_p4_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p4_str"
+        },
+        {
+          "out_run": "d_s24_p42spa_mask_n24_s2",
+          "source_run": "d_s24_p4_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p4_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p4_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p4_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p4_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p4_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p52str_mask_n24_s0",
+          "source_run": "d_s24_p5_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p5_str"
+        },
+        {
+          "out_run": "d_s24_p52spa_mask_n24_s0",
+          "source_run": "d_s24_p5_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p5_spa"
+        },
+        {
+          "out_run": "d_s24_p52str_mask_n24_s1",
+          "source_run": "d_s24_p5_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p5_str"
+        },
+        {
+          "out_run": "d_s24_p52spa_mask_n24_s1",
+          "source_run": "d_s24_p5_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p5_spa"
+        },
+        {
+          "out_run": "d_s24_p52str_mask_n24_s2",
+          "source_run": "d_s24_p5_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p5_str"
+        },
+        {
+          "out_run": "d_s24_p52spa_mask_n24_s2",
+          "source_run": "d_s24_p5_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p5_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p5_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p5_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p5_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p5_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p62str_mask_n24_s0",
+          "source_run": "d_s24_p6_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p6_str"
+        },
+        {
+          "out_run": "d_s24_p62spa_mask_n24_s0",
+          "source_run": "d_s24_p6_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p6_spa"
+        },
+        {
+          "out_run": "d_s24_p62str_mask_n24_s1",
+          "source_run": "d_s24_p6_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p6_str"
+        },
+        {
+          "out_run": "d_s24_p62spa_mask_n24_s1",
+          "source_run": "d_s24_p6_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p6_spa"
+        },
+        {
+          "out_run": "d_s24_p62str_mask_n24_s2",
+          "source_run": "d_s24_p6_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p6_str"
+        },
+        {
+          "out_run": "d_s24_p62spa_mask_n24_s2",
+          "source_run": "d_s24_p6_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p6_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p6_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p6_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p6_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p6_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p72str_mask_n24_s0",
+          "source_run": "d_s24_p7_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p7_str"
+        },
+        {
+          "out_run": "d_s24_p72spa_mask_n24_s0",
+          "source_run": "d_s24_p7_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p7_spa"
+        },
+        {
+          "out_run": "d_s24_p72str_mask_n24_s1",
+          "source_run": "d_s24_p7_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p7_str"
+        },
+        {
+          "out_run": "d_s24_p72spa_mask_n24_s1",
+          "source_run": "d_s24_p7_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p7_spa"
+        },
+        {
+          "out_run": "d_s24_p72str_mask_n24_s2",
+          "source_run": "d_s24_p7_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p7_str"
+        },
+        {
+          "out_run": "d_s24_p72spa_mask_n24_s2",
+          "source_run": "d_s24_p7_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p7_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p7_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p7_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p7_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p7_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p82str_mask_n24_s0",
+          "source_run": "d_s24_p8_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p8_str"
+        },
+        {
+          "out_run": "d_s24_p82spa_mask_n24_s0",
+          "source_run": "d_s24_p8_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p8_spa"
+        },
+        {
+          "out_run": "d_s24_p82str_mask_n24_s1",
+          "source_run": "d_s24_p8_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p8_str"
+        },
+        {
+          "out_run": "d_s24_p82spa_mask_n24_s1",
+          "source_run": "d_s24_p8_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p8_spa"
+        },
+        {
+          "out_run": "d_s24_p82str_mask_n24_s2",
+          "source_run": "d_s24_p8_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p8_str"
+        },
+        {
+          "out_run": "d_s24_p82spa_mask_n24_s2",
+          "source_run": "d_s24_p8_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p8_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p8_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p8_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p8_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p8_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p92str_mask_n24_s0",
+          "source_run": "d_s24_p9_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p9_str"
+        },
+        {
+          "out_run": "d_s24_p92spa_mask_n24_s0",
+          "source_run": "d_s24_p9_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p9_spa"
+        },
+        {
+          "out_run": "d_s24_p92str_mask_n24_s1",
+          "source_run": "d_s24_p9_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p9_str"
+        },
+        {
+          "out_run": "d_s24_p92spa_mask_n24_s1",
+          "source_run": "d_s24_p9_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p9_spa"
+        },
+        {
+          "out_run": "d_s24_p92str_mask_n24_s2",
+          "source_run": "d_s24_p9_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p9_str"
+        },
+        {
+          "out_run": "d_s24_p92spa_mask_n24_s2",
+          "source_run": "d_s24_p9_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p9_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p9_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p9_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p9_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p9_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    },
+    {
+      "rescore": [
+        {
+          "out_run": "d_s24_p102str_mask_n24_s0",
+          "source_run": "d_s24_p10_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p10_str"
+        },
+        {
+          "out_run": "d_s24_p102spa_mask_n24_s0",
+          "source_run": "d_s24_p10_mask_n24_s0",
+          "target_bundle": "data/tok_d24_p10_spa"
+        },
+        {
+          "out_run": "d_s24_p102str_mask_n24_s1",
+          "source_run": "d_s24_p10_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p10_str"
+        },
+        {
+          "out_run": "d_s24_p102spa_mask_n24_s1",
+          "source_run": "d_s24_p10_mask_n24_s1",
+          "target_bundle": "data/tok_d24_p10_spa"
+        },
+        {
+          "out_run": "d_s24_p102str_mask_n24_s2",
+          "source_run": "d_s24_p10_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p10_str"
+        },
+        {
+          "out_run": "d_s24_p102spa_mask_n24_s2",
+          "source_run": "d_s24_p10_mask_n24_s2",
+          "target_bundle": "data/tok_d24_p10_spa"
+        }
+      ],
+      "source_bundle": "data/tok_d24_p10_lay",
+      "train": [
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p10_mask_n24_s0",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1000,
+          "seed": 0
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p10_mask_n24_s1",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1001,
+          "seed": 1
+        },
+        {
+          "constrained_samples": 400,
+          "epochs": 300,
+          "extra": [
+            "--ref-legal-mask"
+          ],
+          "name": "d_s24_p10_mask_n24_s2",
+          "num_samples": 400,
+          "patience": 20,
+          "sample_seed": 1002,
+          "seed": 2
+        }
+      ]
+    }
+  ],
+  "plan_id": "doe_mix_n24"
+}

@@ -1,0 +1,225 @@
+[
+  {
+    "kind": "remove_node",
+    "forward": {
+      "target": "E"
+    },
+    "inverse": {
+      "target": "E",
+      "pred_edges": [
+        "B"
+      ],
+      "succ_edges": [],
+      "weight": 1,
+      "node_type": "basic",
+      "weight_deltas": {
+        "B": 1
+      }
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": false,
+        "focus": []
+      },
+      "scope_after": {
+        "active": false,
+        "focus": []
+      }
+    }
+  },
+  {
+    "kind": "remove_edges",
+    "forward": {
+      "edges": [
+        [
+          "D",
+          "B"
+        ]
+      ]
+    },
+    "inverse": {
+      "edges": [
+        [
+          "D",
+          "B"
+        ]
+      ]
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": false,
+        "focus": []
+      },
+      "scope_after": {
+        "active": true,
+        "focus": [
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      "header": "B",
+      "scc": [
+        "B",
+        "C",
+        "D"
+      ]
+    }
+  },
+  {
+    "kind": "remove_edges",
+    "forward": {
+      "edges": [
+        [
+          "D",
+          "C"
+        ]
+      ]
+    },
+    "inverse": {
+      "edges": [
+        [
+          "D",
+          "C"
+        ]
+      ]
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": true,
+        "focus": [
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      "scope_after": {
+        "active": true,
+        "focus": [
+          "C",
+          "D"
+        ]
+      },
+      "header": "C",
+      "scc": [
+        "C",
+        "D"
+      ]
+    }
+  },
+  {
+    "kind": "remove_node",
+    "forward": {
+      "target": "D"
+    },
+    "inverse": {
+      "target": "D",
+      "pred_edges": [
+        "C"
+      ],
+      "succ_edges": [],
+      "weight": 1,
+      "node_type": "basic",
+      "weight_deltas": {
+        "C": 1
+      }
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": true,
+        "focus": [
+          "C",
+          "D"
+        ]
+      },
+      "scope_after": {
+        "active": true,
+        "focus": [
+          "C"
+        ]
+      }
+    }
+  },
+  {
+    "kind": "remove_node",
+    "forward": {
+      "target": "C"
+    },
+    "inverse": {
+      "target": "C",
+      "pred_edges": [
+        "B"
+      ],
+      "succ_edges": [],
+      "weight": 2,
+      "node_type": "basic",
+      "weight_deltas": {
+        "B": 2
+      }
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": true,
+        "focus": [
+          "C"
+        ]
+      },
+      "scope_after": {
+        "active": false,
+        "focus": []
+      }
+    }
+  },
+  {
+    "kind": "remove_node",
+    "forward": {
+      "target": "B"
+    },
+    "inverse": {
+      "target": "B",
+      "pred_edges": [
+        "A"
+      ],
+      "succ_edges": [],
+      "weight": 4,
+      "node_type": "basic",
+      "weight_deltas": {
+        "A": 4
+      }
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": false,
+        "focus": []
+      },
+      "scope_after": {
+        "active": false,
+        "focus": []
+      }
+    }
+  },
+  {
+    "kind": "remove_node",
+    "forward": {
+      "target": "A"
+    },
+    "inverse": {
+      "target": "A",
+      "pred_edges": [],
+      "succ_edges": [],
+      "weight": 5,
+      "node_type": "basic",
+      "weight_deltas": {}
+    },
+    "meta": {
+      "scope_snapshot": {
+        "active": false,
+        "focus": []
+      },
+      "scope_after": {
+        "active": false,
+        "focus": []
+      }
+    }
+  }
+]
