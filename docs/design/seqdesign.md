@@ -50,4 +50,20 @@ python -m training.seqdesign simulate --surface scheffe --rounds 8 --k 3 --repea
 
 ## 5. 実行記録
 
-(未着手)
+### 5.1 実装と遡及評価(2026-09-26)
+
+- 実装(詳細設計 §9 の T1〜T3、Codex gpt-6-astra low、各回オーケストレータが再検証): e3d41d9(型・検証・JSON・決定的 RNG・
+  numpy GP コア)、b1bf2e4(獲得関数 ts / ei / ucb / random / fixed、提案と seed 予約、CLI 5 コマンド、日本語報告と三角図、
+  合成検証と遡及評価)、547caa0(`experiments/mixture_doe/materialize.py`: 提案 → spec・generate/tokenize/collect スクリプト・
+  runner Plan・manifest)、95b8355(正規乱数生成のベクトル化。`normal_draw` を繰り返した列と完全一致。`simulate --summary-samples`
+  既定 512、report は 4096 のまま)。テスト 873 件、`ty` 通過。
+- 遡及評価(n24 の 12 点 × 3 seed、超過 NLL(target 固有基準)、`obs_xt.json`、TS k=3、seed 2):
+  - 6 点(純 3 点 + 辺 3 点)投入後の bal 提案: (0.45, 0.30, 0.25)、(0.35, 0.00, 0.65)、(0.60, 0.20, 0.20)。内部の点を選び、頂点や辺には戻らない。
+  - 12 点投入後の bal 提案: (0.35, 0.15, 0.50)、(0.00, 0.30, 0.70)、(0.60, 0.05, 0.35)。max 提案: (0.25, 0.25, 0.50)、(0.05, 0.35, 0.60)、(0.25, 0.30, 0.45)。いずれも spaghetti 寄りの内部で、
+    「正規化後の最悪ケースは spaghetti」「bal は内部で平坦」という DoE の読み(`mixture_doe.md` §9.1)と整合する。
+  - 6 点時点から残り 6 点(全て内部)への 95% 予測区間の被覆: lay 15/18、
+    str 12/18、spa 15/18、
+    bal 15/18。等分散ノイズの GP では純 structured の大きな seed 分散が内部の
+    区間幅に混ざる一方、str の区間はやや狭い(詳細設計 §4.1 の注記どおり)。
+- 合成検証(`simulate`、10 条件 × 目的 2 × 手法 5 × 8 ラウンド)は 1 ラウンド 1〜3 秒かかるため、反復 10 で実行中
+  (結果は §5.2 に追記)。実装時の 20 反復は `GR_SLOW_TESTS=1` の試験にのみ残す。
