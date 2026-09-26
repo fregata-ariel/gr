@@ -1,0 +1,138 @@
+{
+  "buckets": [
+    {
+      "bundle": "data/tok_pretrain_n8",
+      "dataset": "data/pretrain_test_n8",
+      "n": 8
+    },
+    {
+      "bundle": "data/tok_pretrain_n12",
+      "dataset": "data/pretrain_test_n12",
+      "n": 12
+    },
+    {
+      "bundle": "data/tok_pretrain_n16",
+      "dataset": "data/pretrain_test_n16",
+      "n": 16
+    },
+    {
+      "bundle": "data/tok_pretrain_n24",
+      "dataset": "data/pretrain_test_n24",
+      "n": 24
+    },
+    {
+      "bundle": "data/tok_pretrain_n32",
+      "dataset": "data/pretrain_test_n32",
+      "n": 32
+    },
+    {
+      "bundle": "data/tok_pretrain_n48",
+      "dataset": "data/pretrain_test_n48",
+      "n": 48
+    },
+    {
+      "bundle": "data/tok_pretrain_n64",
+      "dataset": "data/pretrain_test_n64",
+      "n": 64
+    },
+    {
+      "bundle": "data/tok_pretrain_n96",
+      "dataset": "data/pretrain_test_n96",
+      "n": 96
+    },
+    {
+      "bundle": "data/tok_pretrain_n128",
+      "dataset": "data/pretrain_test_n128",
+      "n": 128
+    },
+    {
+      "bundle": "data/tok_pretrain_n192",
+      "dataset": "data/pretrain_test_n192",
+      "n": 192
+    },
+    {
+      "bundle": "data/tok_pretrain_n256",
+      "dataset": "data/pretrain_test_n256",
+      "n": 256
+    }
+  ],
+  "runs": [
+    {
+      "name": "pretrain_cmp_sinusoidal_s0",
+      "pos": "sinusoidal",
+      "scores_by_n": {
+        "12": "runs/pretrain_cmp_sinusoidal_s0__n12/test_scores.jsonl",
+        "128": "runs/pretrain_cmp_sinusoidal_s0__n128/test_scores.jsonl",
+        "16": "runs/pretrain_cmp_sinusoidal_s0__n16/test_scores.jsonl",
+        "192": "runs/pretrain_cmp_sinusoidal_s0__n192/test_scores.jsonl",
+        "24": "runs/pretrain_cmp_sinusoidal_s0__n24/test_scores.jsonl",
+        "256": "runs/pretrain_cmp_sinusoidal_s0__n256/test_scores.jsonl",
+        "32": "runs/pretrain_cmp_sinusoidal_s0__n32/test_scores.jsonl",
+        "48": "runs/pretrain_cmp_sinusoidal_s0__n48/test_scores.jsonl",
+        "64": "runs/pretrain_cmp_sinusoidal_s0__n64/test_scores.jsonl",
+        "8": "runs/pretrain_cmp_sinusoidal_s0__n8/test_scores.jsonl",
+        "96": "runs/pretrain_cmp_sinusoidal_s0__n96/test_scores.jsonl"
+      },
+      "seed": 0,
+      "source_run": "runs/pretrain_cmp_sinusoidal_s0"
+    },
+    {
+      "name": "pretrain_cmp_alibi_s0",
+      "pos": "alibi",
+      "scores_by_n": {
+        "12": "runs/pretrain_cmp_alibi_s0__n12/test_scores.jsonl",
+        "128": "runs/pretrain_cmp_alibi_s0__n128/test_scores.jsonl",
+        "16": "runs/pretrain_cmp_alibi_s0__n16/test_scores.jsonl",
+        "192": "runs/pretrain_cmp_alibi_s0__n192/test_scores.jsonl",
+        "24": "runs/pretrain_cmp_alibi_s0__n24/test_scores.jsonl",
+        "256": "runs/pretrain_cmp_alibi_s0__n256/test_scores.jsonl",
+        "32": "runs/pretrain_cmp_alibi_s0__n32/test_scores.jsonl",
+        "48": "runs/pretrain_cmp_alibi_s0__n48/test_scores.jsonl",
+        "64": "runs/pretrain_cmp_alibi_s0__n64/test_scores.jsonl",
+        "8": "runs/pretrain_cmp_alibi_s0__n8/test_scores.jsonl",
+        "96": "runs/pretrain_cmp_alibi_s0__n96/test_scores.jsonl"
+      },
+      "seed": 0,
+      "source_run": "runs/pretrain_cmp_alibi_s0"
+    },
+    {
+      "name": "pretrain_cmp_none_s0",
+      "pos": "none",
+      "scores_by_n": {
+        "12": "runs/pretrain_cmp_none_s0__n12/test_scores.jsonl",
+        "128": "runs/pretrain_cmp_none_s0__n128/test_scores.jsonl",
+        "16": "runs/pretrain_cmp_none_s0__n16/test_scores.jsonl",
+        "192": "runs/pretrain_cmp_none_s0__n192/test_scores.jsonl",
+        "24": "runs/pretrain_cmp_none_s0__n24/test_scores.jsonl",
+        "256": "runs/pretrain_cmp_none_s0__n256/test_scores.jsonl",
+        "32": "runs/pretrain_cmp_none_s0__n32/test_scores.jsonl",
+        "48": "runs/pretrain_cmp_none_s0__n48/test_scores.jsonl",
+        "64": "runs/pretrain_cmp_none_s0__n64/test_scores.jsonl",
+        "8": "runs/pretrain_cmp_none_s0__n8/test_scores.jsonl",
+        "96": "runs/pretrain_cmp_none_s0__n96/test_scores.jsonl"
+      },
+      "seed": 0,
+      "source_run": "runs/pretrain_cmp_none_s0"
+    }
+  ],
+  "schema_version": 1,
+  "selection_protocol": {
+    "comparison_prefix_wf": "比較phaseはprobes=0のためWFによる同点判定は欠測。",
+    "equivalence": "paired token-weighted bootstrap CI95 includes zero",
+    "held_out_n": 256,
+    "implementation_checks": "NaN・異常値・制約生成の文法違反は選択前に検査する。",
+    "n256_policy": "選択固定後に開く。方式選択には使わない。",
+    "phase": "compare",
+    "primary": "n192 retained token-micro NLL minimum",
+    "selection_n": 192,
+    "selection_record": "selection.jsonにchosen_posとID9 bucketの代償を記録する。",
+    "small_bucket_policy": "n8/12はraw<100ならID macroから除外し注記する。",
+    "tie_break_order": [
+      "teacher-forced REF violations",
+      "prefix-continuation WF",
+      "seconds/epoch"
+    ]
+  },
+  "source_bundle": "data/tok_pretrain_n48",
+  "source_dataset": "data/pretrain_mix"
+}
